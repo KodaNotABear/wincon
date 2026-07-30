@@ -192,6 +192,12 @@ function Dashboard({
     return [...counts.entries()].sort((a, b) => b[1] - a[1])
   }, [report.matches])
 
+  // The most-played champion's splash art becomes the hero backdrop.
+  const splashChamp = useMemo(
+    () => Object.entries(report.aggregate.championCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
+    [report.aggregate.championCounts],
+  )
+
   const streak = useMemo(() => {
     const first = report.matches[0]?.win
     if (first === undefined) return null
@@ -262,6 +268,16 @@ function Dashboard({
       )}
 
       <section className="hero">
+        {splashChamp && (
+          <img
+            className="hero-splash"
+            src={`https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${splashChamp}_0.jpg`}
+            alt=""
+            onError={e => {
+              ;(e.target as HTMLImageElement).style.display = 'none'
+            }}
+          />
+        )}
         <svg className="hero-mark" viewBox="0 0 32 32" aria-hidden="true">
           <path
             d="M8.5 10.5 L12 22 L16 13.5 L20 22 L23.5 10.5"

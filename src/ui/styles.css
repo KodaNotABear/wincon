@@ -32,6 +32,7 @@
   --map-terrain: #e2e6d8;
   --map-brush: #c8ddba;
   --map-camp: #b4b8a6;
+  --map-wash: 0.62;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -58,6 +59,7 @@
     --map-terrain: #191e15;
     --map-brush: #24391f;
     --map-camp: #3a3e33;
+    --map-wash: 0.38;
   }
 }
 
@@ -443,10 +445,10 @@ svg text {
   padding: 7px 10px;
   font-size: 12.5px;
   line-height: 1.45;
-  max-width: 240px;
+  width: max-content;
+  max-width: 260px;
   z-index: 10;
   transform: translate(-50%, calc(-100% - 10px));
-  white-space: nowrap;
 }
 .tooltip .tip-title {
   font-family: var(--font-display);
@@ -614,13 +616,31 @@ footer {
   border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow: var(--card-shadow);
-  padding: 20px 22px;
+  padding: 26px 24px;
+  min-height: 176px;
   margin-bottom: 16px;
 }
 @media (max-width: 820px) {
   .hero {
     grid-template-columns: 1fr;
   }
+}
+.hero-splash {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+  opacity: 0.34;
+  -webkit-mask-image: linear-gradient(100deg, transparent 4%, rgba(0, 0, 0, 0.55) 45%, #000 100%);
+  mask-image: linear-gradient(100deg, transparent 4%, rgba(0, 0, 0, 0.55) 45%, #000 100%);
+  pointer-events: none;
+}
+.hero-id,
+.hero .hero-replay {
+  position: relative;
+  z-index: 1;
 }
 .hero-mark {
   position: absolute;
@@ -656,7 +676,7 @@ footer {
 }
 .hero-name {
   font-family: var(--font-display);
-  font-size: 30px;
+  font-size: 38px;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
@@ -793,6 +813,34 @@ footer {
   from {
     opacity: 0;
     transform: scale(0.96) translateY(8px);
+  }
+}
+
+.map-note {
+  cursor: help;
+}
+.note-glyph {
+  font-family: var(--font-display);
+  font-size: 2.6px;
+  font-weight: 700;
+  fill: #0b0b0b;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .note-pulse {
+    animation: note-ping 1.6s ease-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+}
+@keyframes note-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
   }
 }
 

@@ -1,4 +1,5 @@
 import { MAP_MAX } from '../analysis/metrics'
+import { useDdragonVersion } from './ddragon'
 
 // Game coords: blue base at origin (bottom-left), red base top-right.
 // SVG y grows downward, so flip y. Both map views share this projection.
@@ -81,12 +82,46 @@ const TOWERS: { x: number; y: number; team: 100 | 200 }[] = [
 const ALCOVES = [at(1900, 12900), at(12900, 1900)]
 
 /**
- * Stylized Summoner's Rift: river along the anti-diagonal, cornered lanes,
- * jungle terrain, camps, brushes, alcoves, turrets, team base arcs, and the
- * two objective pits. Colors come from map tokens so both themes read as
- * terrain rather than chrome.
+ * The map base. When Data Dragon is reachable we use Riot's actual minimap
+ * raster (accurate geometry: real jungle walls, pits, camps) desaturated and
+ * washed toward our palette; offline we fall back to the hand-drawn stylized
+ * Rift. Both render in the same 0-100 projection, so dots, trails, and pings
+ * land identically on either base.
  */
 export function RiftBackdrop() {
+  const version = useDdragonVersion()
+  if (version) {
+    return (
+      <>
+        <defs>
+          <filter id="rift-tone">
+            <feColorMatrix type="saturate" values="0.35" />
+          </filter>
+          <clipPath id="rift-clip">
+            <rect x="0.5" y="0.5" width="99" height="99" rx="4" />
+          </clipPath>
+        </defs>
+        <rect x="0.5" y="0.5" width="99" height="99" rx="4" fill="var(--map-bg)" stroke="var(--border)" />
+        <image
+          href={`https://ddragon.leagueoflegends.com/cdn/${version}/img/map/map11.png`}
+          x="0.5"
+          y="0.5"
+          width="99"
+          height="99"
+          preserveAspectRatio="none"
+          filter="url(#rift-tone)"
+          clipPath="url(#rift-clip)"
+        />
+        {/* Wash the raster toward the theme so palette elements stay dominant */}
+        <rect x="0.5" y="0.5" width="99" height="99" rx="4" fill="var(--map-bg)" opacity="var(--map-wash)" />
+        <rect x="0.5" y="0.5" width="99" height="99" rx="4" fill="none" stroke="var(--border)" />
+      </>
+    )
+  }
+  return <StylizedRift />
+}
+
+function StylizedRift() {
   return (
     <>
       <rect x="0.5" y="0.5" width="99" height="99" rx="4" fill="var(--map-bg)" stroke="var(--border)" />

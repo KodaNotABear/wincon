@@ -106,6 +106,9 @@ export interface BuildingKillEvent {
   teamId: 100 | 200
   buildingType: string
   position: Position
+  /** 0 when minions finished the building. */
+  killerId?: number
+  assistingParticipantIds?: number[]
 }
 
 /** Purchases only happen at the shop, so these mark base visits precisely. */

@@ -27,14 +27,15 @@ import { normalizeDuration } from '../riot/types'
 import { buildMoments, clusterMoments, type Moment, type MomentKind } from '../analysis/moments'
 import { ChampIcon, champIconUrl, useDdragonVersion } from './ddragon'
 import { RiftBackdrop, sx, sy } from './RiftMap'
+import { useTooltip } from './shared'
 
 interface RawEntry {
   match: MatchDto
   timeline: TimelineDto
 }
 
-// 60 in-game seconds per real second at 1x: a 30 minute game replays in 30s.
-const BASE_RATE = 60
+// 45 in-game seconds per real second at 1x: a 30 minute game replays in 40s.
+const BASE_RATE = 45
 const SPEEDS = [0.5, 1, 2, 4]
 const PING_LIFE_MS = 30_000 // in-game lifetime of a kill ping
 const TRAIL_FRAMES = 6 // minutes of movement history behind your champion
@@ -167,6 +168,24 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
         } else if (event.type === 'ITEM_PURCHASED') {
           const buy = event as ItemPurchasedEvent
           add(buy.participantId, { ts: buy.timestamp, kind: 'base' })
+        } else if (event.type === 'ELITE_MONSTER_KILL') {
+          // Whoever killed or assisted on an epic monster was at the pit.
+          const monster = event as EliteMonsterKillEvent
+          if (monster.killerId >= 1 && monster.killerId <= 10) {
+            add(monster.killerId, { ts: monster.timestamp, pos: monster.position, kind: 'pin' })
+          }
+          for (const assistId of monster.assistingParticipantIds ?? []) {
+            add(assistId, { ts: monster.timestamp, pos: monster.position, kind: 'pin' })
+          }
+        } else if (event.type === 'BUILDING_KILL') {
+          // Whoever killed or assisted on a building was at that turret.
+          const building = event as BuildingKillEvent
+          if (building.killerId && building.killerId >= 1 && building.killerId <= 10) {
+            add(building.killerId, { ts: building.timestamp, pos: building.position, kind: 'pin' })
+          }
+          for (const assistId of building.assistingParticipantIds ?? []) {
+            add(assistId, { ts: building.timestamp, pos: building.position, kind: 'pin' })
+          }
         }
       }
     }
@@ -231,6 +250,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     [timeline],
   )
 
+  const tooltip = useTooltip()
   const [clock, setClock] = useState(0)
   const [playing, setPlaying] = useState(true)
   const [speed, setSpeed] = useState(1)
@@ -338,6 +358,53 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       if (anchor.kind === 'death' || anchor.kind === 'base') trailSegments.push([])
     }
     trailSegments[trailSegments.length - 1]!.push(point({ x: meDot.x, y: meDot.y }))
+  }
+
+  // While paused, annotate the map with computed context: where the enemy
+  // jungler was when you died, and where YOU were when objectives fell.
+  // Hovering a marker explains what it means.
+  interface MapNote {
+    x: number
+    y: number
+    from?: Position
+    title: string
+    tip: string
+  }
+  const mapNotes: MapNote[] = []
+  if (activeCluster && me) {
+    const enemyJungler = match.info.participants.find(
+      p => p.teamId !== me.teamId && p.teamPosition === 'JUNGLE',
+    )
+    for (const moment of activeCluster) {
+      if (moment.kind === 'death' && moment.position && enemyJungler) {
+        const pos = posAt(enemyJungler.participantId, moment.timestamp)
+        if (pos) {
+          const dist = Math.round(Math.hypot(pos.x - moment.position.x, pos.y - moment.position.y))
+          const far = dist > 6000
+          mapNotes.push({
+            x: pos.x,
+            y: pos.y,
+            from: moment.position,
+            title: `${enemyJungler.championName} (enemy jungler) was here`,
+            tip: far
+              ? `Roughly ${dist.toLocaleString()} units away, the far side of the map. This death wasn't a gank; the lane itself went wrong.`
+              : `Only ~${dist.toLocaleString()} units away when you died. The gank was on before you committed; track their jungler's last-seen side before trading.`,
+          })
+        }
+      } else if (moment.kind === 'objective' && moment.position && moment.autoPause) {
+        const myPos = posAt(me.participantId, moment.timestamp)
+        if (myPos) {
+          const dist = Math.round(Math.hypot(myPos.x - moment.position.x, myPos.y - moment.position.y))
+          mapNotes.push({
+            x: myPos.x,
+            y: myPos.y,
+            from: moment.position,
+            title: 'You were here',
+            tip: `About ${dist.toLocaleString()} units from the objective when your team took it. A planned cross-map trade is fine; being late isn't. Start rotating 30 seconds before the spawn.`,
+          })
+        }
+      }
+    }
   }
 
   const activePings = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < PING_LIFE_MS)
@@ -481,7 +548,34 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                   </g>
                 )
               })}
+              {mapNotes.map((note, i) => (
+                <g
+                  key={`note-${i}`}
+                  className="map-note"
+                  onMouseMove={e => tooltip.show(e, note.title, [note.tip])}
+                  onMouseLeave={tooltip.hide}
+                >
+                  {note.from && (
+                    <line
+                      x1={sx(note.from.x)}
+                      y1={sy(note.from.y)}
+                      x2={sx(note.x)}
+                      y2={sy(note.y)}
+                      stroke="var(--status-warn)"
+                      strokeWidth="0.4"
+                      strokeDasharray="1.2 1"
+                      opacity="0.8"
+                    />
+                  )}
+                  <circle className="note-pulse" cx={sx(note.x)} cy={sy(note.y)} r="3.4" fill="none" stroke="var(--status-warn)" strokeWidth="0.5" />
+                  <circle cx={sx(note.x)} cy={sy(note.y)} r="1.7" fill="var(--status-warn)" />
+                  <text className="note-glyph" x={sx(note.x)} y={sy(note.y) + 0.85} textAnchor="middle">
+                    !
+                  </text>
+                </g>
+              ))}
             </svg>
+            {tooltip.node}
 
             {activeCluster && (
               <div className="moment-card" key={activeCluster[0]!.title}>
