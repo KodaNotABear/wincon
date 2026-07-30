@@ -33,6 +33,17 @@ export function App() {
 function Brand() {
   return (
     <h1 className="wordmark">
+      <svg className="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="8" fill="var(--brand)" />
+        <path
+          d="M8.5 10.5 L12 22 L16 13.5 L20 22 L23.5 10.5"
+          fill="none"
+          stroke="var(--brand-ink)"
+          strokeWidth="3.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
       <span className="accent">Win</span>con
     </h1>
   )

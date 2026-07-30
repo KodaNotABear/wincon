@@ -27,12 +27,8 @@ export function MatchTable({ matches }: { matches: MatchReport[] }) {
               </td>
               <td>{m.role ? m.role.charAt(0) + m.role.slice(1).toLowerCase() : '?'}</td>
               <td>
-                <span className="result">
-                  <span
-                    className="swatch"
-                    style={{ background: m.win ? 'var(--series-1)' : 'var(--series-2)' }}
-                  />
-                  {m.win ? 'Win' : 'Loss'}
+                <span className={`result-badge ${m.win ? 'win' : 'loss'}`}>
+                  {m.win ? 'WIN' : 'LOSS'}
                 </span>
               </td>
               <td className="num">

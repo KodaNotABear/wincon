@@ -2,19 +2,19 @@ import { useState, type ReactNode } from 'react'
 import type { Severity } from '../analysis/insights'
 
 // Status colors are the reserved status palette; they never impersonate a
-// series and always ship next to a text label.
-export const SEVERITY: Record<Severity, { label: string; color: string }> = {
-  bad: { label: 'Fix this', color: 'var(--status-critical)' },
-  warn: { label: 'Watch', color: 'var(--status-warn)' },
-  info: { label: 'Note', color: 'var(--baseline)' },
-  good: { label: 'Strength', color: 'var(--status-good)' },
+// series and always ship next to a text label. Filled chips pick their text
+// color for contrast against the fill in both modes.
+export const SEVERITY: Record<Severity, { label: string; color: string; textOnFill: string }> = {
+  bad: { label: 'Fix this', color: 'var(--status-critical)', textOnFill: '#ffffff' },
+  warn: { label: 'Watch', color: 'var(--status-warn)', textOnFill: '#0b0b0b' },
+  info: { label: 'Note', color: 'var(--baseline)', textOnFill: 'var(--ink)' },
+  good: { label: 'Strength', color: 'var(--status-good)', textOnFill: '#ffffff' },
 }
 
 export function SeverityChip({ severity }: { severity: Severity }) {
   const s = SEVERITY[severity]
   return (
-    <span className="chip">
-      <span className="dot" style={{ background: s.color }} />
+    <span className="sev-chip" style={{ background: s.color, color: s.textOnFill }}>
       {s.label.toUpperCase()}
     </span>
   )
