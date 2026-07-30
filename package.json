@@ -1,0 +1,31 @@
+{
+  "name": "emerald-exit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A personal ranked review tool for League of Legends. Pulls your recent ranked games from the Riot API and tells you why you lost, not just that you did.",
+  "scripts": {
+    "sync": "tsx src/cli/sync.ts",
+    "analyze": "tsx src/cli/analyze.ts",
+    "demo": "tsx src/cli/demo.ts",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  }
+}
