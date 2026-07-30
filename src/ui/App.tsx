@@ -487,7 +487,10 @@ function Dashboard({
       {report.isDemo && (
         <div className="demo-banner">
           {IS_PORTFOLIO_DEMO ? (
-            <>Portfolio demo with seeded match data. No player data or API key is included.</>
+            <>
+              Portfolio demo with one anonymized showcase match and seeded history. Riot IDs and API
+              keys are not included.
+            </>
           ) : (
             <>
               Sample data. Run <code>npm run sync -- "Name#TAG"</code> (see <code>.env.example</code>),
@@ -576,7 +579,12 @@ function Dashboard({
       )}
 
       {tourStep !== null && (
-        <GuidedTour step={tourStep} onNext={advanceTour} onClose={stopTour} />
+        <GuidedTour
+          step={tourStep}
+          games={report.matches.length}
+          onNext={advanceTour}
+          onClose={stopTour}
+        />
       )}
 
       <footer>
@@ -590,11 +598,11 @@ function Dashboard({
   )
 }
 
-const TOUR_STEPS = [
+const tourSteps = (games: number) => [
   {
     kicker: 'Player first',
     title: 'Diagnosis, not dashboard',
-    body: 'Thirty-eight matches collapse into one clear habit that is costing this player the climb.',
+    body: `${games} matches collapse into one clear habit that is costing this player the climb.`,
     action: 'Show the evidence',
   },
   {
@@ -625,18 +633,21 @@ const TOUR_STEPS = [
 
 function GuidedTour({
   step,
+  games,
   onNext,
   onClose,
 }: {
   step: number
+  games: number
   onNext: () => void
   onClose: () => void
 }) {
-  const current = TOUR_STEPS[step]!
+  const steps = tourSteps(games)
+  const current = steps[step]!
   return (
     <aside className="tour-rail" aria-live="polite">
-      <div className="tour-progress" aria-label={`Walkthrough step ${step + 1} of ${TOUR_STEPS.length}`}>
-        {TOUR_STEPS.map((_, i) => (
+      <div className="tour-progress" aria-label={`Walkthrough step ${step + 1} of ${steps.length}`}>
+        {steps.map((_, i) => (
           <span key={i} className={i <= step ? 'active' : undefined} />
         ))}
       </div>

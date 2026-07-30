@@ -63,8 +63,9 @@ npm run dev
 
 ### Portfolio build
 
-The hosted demo bundles the seeded player report and all replay timelines as
-static files. It does not include an API key or personal match data.
+The hosted demo bundles an anonymized showcase match, seeded history, and all
+replay timelines as static files. Riot IDs, PUUIDs, summoner IDs, original
+match IDs, and API keys are not included.
 
 ```sh
 WINCON_STATIC_DEMO=true WINCON_BASE=/wincon/ npm run build

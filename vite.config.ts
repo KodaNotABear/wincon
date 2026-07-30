@@ -130,7 +130,8 @@ const portfolioDemo = (): Plugin => ({
   apply: 'build',
   generateBundle() {
     const slug = `${DEMO_PLAYER.gameName}-${DEMO_PLAYER.tagLine}`.toLowerCase()
-    const entries = generateDataset(7, 24)
+    const showcase = JSON.parse(fs.readFileSync(path.resolve('src/fixtures/locke-vs-fizz.json'), 'utf8'))
+    const entries = [showcase, ...generateDataset(7, 23)]
     const generatedAt = '2026-07-30T12:00:00.000Z'
     const report = buildClimbReport(entries, DEMO_PLAYER, { isDemo: true, generatedAt })
     const json = (value: unknown) => JSON.stringify(value)
