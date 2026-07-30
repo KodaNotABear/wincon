@@ -52,9 +52,10 @@ const mmss = (ms: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-interface Break {
+interface Anchor {
   ts: number
   pos?: Position
+  kind: 'frame' | 'pin' | 'death' | 'base'
 }
 
 export function Replay({
@@ -138,35 +139,82 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     [timeline],
   )
 
-  // Interpolation breaks per participant: deaths (with the exact death spot)
-  // and base visits (first item purchase of a shopping trip).
-  const breaks = useMemo(() => {
-    const map = new Map<number, Break[]>()
-    const push = (pid: number, b: Break) => {
-      const list = map.get(pid) ?? []
-      list.push(b)
-      map.set(pid, list)
+  // Position anchors per participant, using every positional signal the API
+  // has: minute frames, deaths (exact spot), kill participation (killer and
+  // assisters were at the victim's position), and base visits (purchases
+  // only happen at the shop). Deaths and base visits are teleports.
+  const anchorsByPid = useMemo(() => {
+    const map = new Map<number, Anchor[]>()
+    const add = (pid: number, anchor: Anchor) => {
+      const list = map.get(pid)
+      if (list) list.push(anchor)
+      else map.set(pid, [anchor])
     }
     for (const frame of timeline.info.frames) {
+      for (const pf of Object.values(frame.participantFrames)) {
+        add(pf.participantId, { ts: frame.timestamp, pos: pf.position, kind: 'frame' })
+      }
       for (const event of frame.events) {
         if (event.type === 'CHAMPION_KILL') {
           const kill = event as ChampionKillEvent
-          push(kill.victimId, { ts: kill.timestamp, pos: kill.position })
+          add(kill.victimId, { ts: kill.timestamp, pos: kill.position, kind: 'death' })
+          if (kill.killerId >= 1 && kill.killerId <= 10) {
+            add(kill.killerId, { ts: kill.timestamp, pos: kill.position, kind: 'pin' })
+          }
+          for (const assistId of kill.assistingParticipantIds ?? []) {
+            add(assistId, { ts: kill.timestamp, pos: kill.position, kind: 'pin' })
+          }
         } else if (event.type === 'ITEM_PURCHASED') {
           const buy = event as ItemPurchasedEvent
-          const list = map.get(buy.participantId)
-          const last = list?.[list.length - 1]
-          // Collapse a shopping spree into one base visit.
-          if (!last || buy.timestamp - last.ts > 3_000) push(buy.participantId, { ts: buy.timestamp })
+          add(buy.participantId, { ts: buy.timestamp, kind: 'base' })
         }
       }
     }
-    for (const list of map.values()) list.sort((a, b) => a.ts - b.ts)
+    for (const [pid, list] of map) {
+      list.sort((a, b) => a.ts - b.ts)
+      // Collapse shopping sprees into one base visit.
+      const cleaned: Anchor[] = []
+      for (const anchor of list) {
+        const prev = cleaned[cleaned.length - 1]
+        if (anchor.kind === 'base' && prev?.kind === 'base' && anchor.ts - prev.ts <= 3_000) continue
+        cleaned.push(anchor)
+      }
+      map.set(pid, cleaned)
+    }
     return map
   }, [timeline])
 
-  const firstBreak = (pid: number, from: number, to: number): Break | null =>
-    breaks.get(pid)?.find(b => b.ts > from && b.ts <= to) ?? null
+  const nextPosAfter = (list: Anchor[], from: number): Position | null => {
+    for (let i = from; i < list.length; i++) {
+      const pos = list[i]?.pos
+      if (pos) return pos
+    }
+    return null
+  }
+
+  const posAt = (pid: number, t: number): Position | null => {
+    const list = anchorsByPid.get(pid)
+    if (!list || list.length === 0) return null
+    let i = -1
+    for (let j = 0; j < list.length && list[j]!.ts <= t; j++) i = j
+    if (i < 0) return list[0]!.pos ?? nextPosAfter(list, 0)
+    const a = list[i]!
+    const b = list[i + 1]
+    // A death or base visit teleports: from that instant, show the champion
+    // wherever the data next places them (fountain, then walking out).
+    if (a.kind === 'death' || a.kind === 'base') {
+      return nextPosAfter(list, i + 1) ?? a.pos ?? null
+    }
+    if (!b) return a.pos ?? null
+    if (b.kind === 'base' || !b.pos) return a.pos ?? null // hold until the teleport
+    if (!a.pos) return b.pos
+    const alpha = b.ts === a.ts ? 0 : (t - a.ts) / (b.ts - a.ts)
+    return { x: a.pos.x + (b.pos.x - a.pos.x) * alpha, y: a.pos.y + (b.pos.y - a.pos.y) * alpha }
+  }
+
+  // Respawn timers aren't in the API; dim the dot briefly after each death.
+  const isRespawning = (pid: number, t: number): boolean =>
+    anchorsByPid.get(pid)?.some(a => a.kind === 'death' && a.ts <= t && t - a.ts < 11_000) ?? false
 
   // Blue team gold lead per frame, for the strip under the map.
   const goldDiff = useMemo(
@@ -262,58 +310,32 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duration])
 
-  // Positions at `clock`: lerp between frames unless a break interrupts.
-  const interval = timeline.info.frameInterval || 60_000
-  const frames = timeline.info.frames
-  const idx = Math.min(Math.floor(clock / interval), frames.length - 1)
-  const nextIdx = Math.min(idx + 1, frames.length - 1)
-  const tsA = idx * interval
-  const tsB = nextIdx * interval
-
-  const positionFor = (pid: number, a: Position, b: Position): Position => {
-    const alpha = tsB === tsA ? 0 : Math.min(1, Math.max(0, (clock - tsA) / (tsB - tsA)))
-    const brk = firstBreak(pid, tsA, tsB)
-    if (!brk) {
-      return { x: a.x + (b.x - a.x) * alpha, y: a.y + (b.y - a.y) * alpha }
-    }
-    if (clock < brk.ts) {
-      if (!brk.pos) return a // heading to base: hold until the teleport
-      const beta = brk.ts === tsA ? 1 : Math.min(1, (clock - tsA) / (brk.ts - tsA))
-      return { x: a.x + (brk.pos.x - a.x) * beta, y: a.y + (brk.pos.y - a.y) * beta }
-    }
-    return b
-  }
-
   const dots = match.info.participants.flatMap(p => {
-    const a = frames[idx]?.participantFrames[String(p.participantId)]
-    const b = frames[nextIdx]?.participantFrames[String(p.participantId)]
-    if (!a || !b) return []
-    const pos = positionFor(p.participantId, a.position, b.position)
-    return [{ participant: p, x: pos.x, y: pos.y, isMe: p.puuid === puuid }]
+    const pos = posAt(p.participantId, clock)
+    if (!pos) return []
+    return [
+      {
+        participant: p,
+        x: pos.x,
+        y: pos.y,
+        isMe: p.puuid === puuid,
+        respawning: isRespawning(p.participantId, clock),
+      },
+    ]
   })
 
-  // Movement history for your champion, split into segments at every break
-  // (death or base visit) so the trail never draws impossible walks.
+  // Movement history for your champion from the anchor list, split into
+  // segments at every teleport so the trail never draws impossible walks.
   const meDot = dots.find(d => d.isMe)
   const trailSegments: string[][] = [[]]
   if (me && meDot) {
-    const pid = me.participantId
     const point = (p: Position) => `${sx(p.x)},${sy(p.y)}`
-    for (let i = Math.max(0, idx - TRAIL_FRAMES); i < idx; i++) {
-      const pf = frames[i]?.participantFrames[String(pid)]
-      if (pf) trailSegments[trailSegments.length - 1]!.push(point(pf.position))
-      const brk = firstBreak(pid, i * interval, (i + 1) * interval)
-      if (brk) {
-        if (brk.pos) trailSegments[trailSegments.length - 1]!.push(point(brk.pos))
-        trailSegments.push([])
-      }
-    }
-    const pfNow = frames[idx]?.participantFrames[String(pid)]
-    if (pfNow) trailSegments[trailSegments.length - 1]!.push(point(pfNow.position))
-    const brkNow = firstBreak(pid, tsA, Math.min(clock, tsB))
-    if (brkNow) {
-      if (brkNow.pos) trailSegments[trailSegments.length - 1]!.push(point(brkNow.pos))
-      trailSegments.push([])
+    const from = clock - TRAIL_FRAMES * 60_000
+    for (const anchor of anchorsByPid.get(me.participantId) ?? []) {
+      if (anchor.ts > clock) break
+      if (anchor.ts < from) continue
+      if (anchor.pos) trailSegments[trailSegments.length - 1]!.push(point(anchor.pos))
+      if (anchor.kind === 'death' || anchor.kind === 'base') trailSegments.push([])
     }
     trailSegments[trailSegments.length - 1]!.push(point({ x: meDot.x, y: meDot.y }))
   }
@@ -429,7 +451,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                 const cy = sy(d.y)
                 const team = d.participant.teamId === 100 ? 'var(--series-1)' : 'var(--series-2)'
                 return (
-                  <g key={pid}>
+                  <g key={pid} opacity={d.respawning ? 0.35 : 1}>
                     <title>{d.participant.championName}</title>
                     <circle cx={cx} cy={cy} r={r} fill={team} />
                     {version && (

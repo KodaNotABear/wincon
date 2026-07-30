@@ -192,6 +192,17 @@ function Dashboard({
     return [...counts.entries()].sort((a, b) => b[1] - a[1])
   }, [report.matches])
 
+  const streak = useMemo(() => {
+    const first = report.matches[0]?.win
+    if (first === undefined) return null
+    let count = 0
+    for (const m of report.matches) {
+      if (m.win === first) count++
+      else break
+    }
+    return { win: first, count }
+  }, [report.matches])
+
   const filterActive = roleFilter !== null || champFilter !== null
   const shownInsights = allInsights ? insights : insights.slice(0, INSIGHTS_SHOWN)
   const shownGames = allGames ? filtered : filtered.slice(0, GAMES_SHOWN)
@@ -265,13 +276,21 @@ function Dashboard({
           <WinrateDonut wins={report.aggregate.wins} games={report.aggregate.games} />
           <div className="hero-id-text">
             <span className="hero-kicker">
-              {ROLE_LABELS[report.aggregate.primaryRole] ?? '?'} main · {report.matches.length} ranked games ·{' '}
-              {window}
+              Welcome back · {ROLE_LABELS[report.aggregate.primaryRole] ?? '?'} main ·{' '}
+              {report.matches.length} ranked games · {window}
             </span>
-            <h2 className="hero-name">
-              {player.gameName}
-              <span className="hero-tag">#{player.tagLine}</span>
-            </h2>
+            <div className="hero-name-row">
+              <h2 className="hero-name">
+                {player.gameName}
+                <span className="hero-tag">#{player.tagLine}</span>
+              </h2>
+              {streak && streak.count >= 2 && (
+                <span className={`streak-chip ${streak.win ? 'hot' : 'cold'}`}>
+                  {streak.count}
+                  {streak.win ? 'W' : 'L'} streak
+                </span>
+              )}
+            </div>
             {report.insights[0] && (
               <p className="hero-verdict">
                 <span
@@ -426,6 +445,8 @@ function Dashboard({
 
 function WinrateDonut({ wins, games }: { wins: number; games: number }) {
   const pct = games ? wins / games : 0
+  // The arc sweeps in on load, same easing as the stat count-ups.
+  const shown = (useCountUp(pct * 100, 900) ?? 0) / 100
   const R = 26
   const C = 2 * Math.PI * R
   return (
@@ -440,11 +461,11 @@ function WinrateDonut({ wins, games }: { wins: number; games: number }) {
           stroke="var(--brand)"
           strokeWidth="7"
           strokeLinecap="round"
-          strokeDasharray={`${C * pct} ${C}`}
+          strokeDasharray={`${C * shown} ${C}`}
           transform="rotate(-90 32 32)"
         />
       </svg>
-      <span className="donut-num">{Math.round(pct * 100)}%</span>
+      <span className="donut-num">{Math.round(shown * 100)}%</span>
       <span className="donut-sub">
         {wins}W {games - wins}L
       </span>
