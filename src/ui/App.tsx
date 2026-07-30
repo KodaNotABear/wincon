@@ -3,6 +3,11 @@ import { buildAggregate, type ClimbReport, type MatchReport } from '../analysis/
 import { buildInsights } from '../analysis/insights'
 import { ChampIcon } from './ddragon'
 import { DeathMap } from './DeathMap'
+import {
+  FocusPanel,
+  type FocusMetric,
+  useFocusGoal,
+} from './FocusLoop'
 import { LivePanel } from './LivePanel'
 import { MatchTable } from './MatchTable'
 import { Replay } from './Replay'
@@ -11,6 +16,8 @@ import { SEVERITY, SeverityChip, fmtSigned, useCountUp } from './shared'
 
 const INSIGHTS_SHOWN = 4
 const GAMES_SHOWN = 10
+const BASE_URL = import.meta.env.BASE_URL
+const IS_PORTFOLIO_DEMO = import.meta.env.VITE_PORTFOLIO_DEMO === true
 
 interface PlayerEntry {
   slug: string
@@ -28,7 +35,7 @@ export function App() {
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
-    fetch('/players.json')
+    fetch(`${BASE_URL}players.json`)
       .then(res => (res.ok ? res.json() : []))
       .then((list: PlayerEntry[]) => {
         const withReports = list.filter(p => p.games > 0)
@@ -42,7 +49,7 @@ export function App() {
   useEffect(() => {
     if (!slug) return
     setReport(null)
-    fetch(`/report/${slug}.json`)
+    fetch(`${BASE_URL}report/${slug}.json`)
       .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
       .then(setReport)
       .catch(() => setFailed(true))
@@ -62,7 +69,7 @@ export function App() {
       })
       const body = await res.json()
       if (!res.ok) throw new Error(body.error ?? 'Sync failed')
-      const list: PlayerEntry[] = await fetch('/players.json').then(r => r.json())
+      const list: PlayerEntry[] = await fetch(`${BASE_URL}players.json`).then(r => r.json())
       setPlayers(list.filter(p => p.games > 0))
       setSlug(body.slug)
       return true
@@ -166,6 +173,13 @@ function Dashboard({
   const [champFilter, setChampFilter] = useState<string | null>(null)
   const [metric, setMetric] = useState<TrendMetric>('csDiff10')
   const [replayId, setReplayId] = useState<string | null>(null)
+  const [guidedReplay, setGuidedReplay] = useState(false)
+  const [tourStep, setTourStep] = useState<number | null>(null)
+  const { goal: focusGoal, choose: chooseFocus, clear: clearFocus } = useFocusGoal(
+    slug,
+    report.aggregate,
+    report.matches,
+  )
 
   // The whole dashboard recomputes from the filtered subset: the analysis
   // layer is pure functions shared with the CLI, so filtering is just
@@ -212,10 +226,59 @@ function Dashboard({
   const filterActive = roleFilter !== null || champFilter !== null
   const shownInsights = allInsights ? insights : insights.slice(0, INSIGHTS_SHOWN)
   const shownGames = allGames ? filtered : filtered.slice(0, GAMES_SHOWN)
+  const recommendedFocus = useMemo<FocusMetric>(() => {
+    const ids = new Set(report.insights.map(insight => insight.id))
+    if (ids.has('early-deaths')) return 'earlyDeaths'
+    if (ids.has('losing-lane-cs') || ids.has('low-cs10')) return 'csDiff10'
+    if (ids.has('low-obj-participation')) return 'objectives'
+    if (ids.has('low-vision')) return 'vision'
+    return 'earlyDeaths'
+  }, [report.insights])
 
-  const window = report.matches.length
+  const reportWindow = report.matches.length
     ? `${new Date(report.matches[report.matches.length - 1]!.gameCreation).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} to ${new Date(report.matches[0]!.gameCreation).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
     : ''
+
+  useEffect(() => {
+    if (tourStep === null || tourStep === 3) return
+    const selector = ['[data-tour="hero"]', '[data-tour="notes"]', '[data-tour="patterns"]', '', '[data-tour="focus"]'][
+      tourStep
+    ]
+    if (!selector) return
+    requestAnimationFrame(() => {
+      document.querySelector(selector)?.scrollIntoView({
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        block: 'center',
+      })
+    })
+  }, [tourStep])
+
+  const stopTour = () => {
+    setTourStep(null)
+    if (guidedReplay) setReplayId(null)
+    setGuidedReplay(false)
+  }
+
+  const advanceTour = () => {
+    if (tourStep === null) return
+    if (tourStep === 2 && report.matches[0]) {
+      setGuidedReplay(true)
+      setReplayId(report.matches[0].matchId)
+      setTourStep(3)
+      return
+    }
+    if (tourStep === 3) {
+      setReplayId(null)
+      setGuidedReplay(false)
+      setTourStep(4)
+      return
+    }
+    if (tourStep === 4) {
+      stopTour()
+      return
+    }
+    setTourStep(tourStep + 1)
+  }
 
   return (
     <div className="shell">
@@ -234,13 +297,24 @@ function Dashboard({
               ))}
             </select>
           )}
-          <button className="chip-btn" onClick={() => setLookupOpen(open => !open)}>
-            {lookupOpen ? 'Cancel' : 'Add player'}
+          {!IS_PORTFOLIO_DEMO && (
+            <button className="chip-btn" onClick={() => setLookupOpen(open => !open)}>
+              {lookupOpen ? 'Cancel' : 'Add player'}
+            </button>
+          )}
+          <button
+            className="chip-btn tour-launch"
+            onClick={() => {
+              setTourStep(0)
+              setGuidedReplay(false)
+            }}
+          >
+            60-second tour
           </button>
         </span>
       </header>
 
-      {lookupOpen && (
+      {!IS_PORTFOLIO_DEMO && lookupOpen && (
         <form
           className="lookup-row"
           onSubmit={async e => {
@@ -267,7 +341,10 @@ function Dashboard({
         </form>
       )}
 
-      <section className="hero">
+      <section
+        className={`hero${tourStep === 0 ? ' tour-emphasis' : ''}`}
+        data-tour="hero"
+      >
         {splashChamp && (
           <img
             className="hero-splash"
@@ -293,7 +370,7 @@ function Dashboard({
           <div className="hero-id-text">
             <span className="hero-kicker">
               Welcome back · {ROLE_LABELS[report.aggregate.primaryRole] ?? '?'} main ·{' '}
-              {report.matches.length} ranked games · {window}
+              {report.matches.length} ranked games · {reportWindow}
             </span>
             <div className="hero-name-row">
               <h2 className="hero-name">
@@ -319,7 +396,13 @@ function Dashboard({
           </div>
         </div>
         {report.matches[0] && (
-          <HeroReplay latest={report.matches[0]} onWatch={() => setReplayId(report.matches[0]!.matchId)} />
+          <HeroReplay
+            latest={report.matches[0]}
+            onWatch={() => {
+              setGuidedReplay(false)
+              setReplayId(report.matches[0]!.matchId)
+            }}
+          />
         )}
       </section>
 
@@ -389,55 +472,87 @@ function Dashboard({
         />
       </div>
 
-      <LivePanel matches={report.matches} />
+      <FocusPanel
+        goal={focusGoal}
+        aggregate={report.aggregate}
+        matches={report.matches}
+        recommended={recommendedFocus}
+        highlighted={tourStep === 4}
+        onChoose={chooseFocus}
+        onClear={clearFocus}
+      />
+
+      {!IS_PORTFOLIO_DEMO && <LivePanel matches={report.matches} />}
 
       {report.isDemo && (
         <div className="demo-banner">
-          Sample data. Run <code>npm run sync -- "Name#TAG"</code> (see <code>.env.example</code>), then{' '}
-          <code>npm run analyze</code> to see real games.
+          {IS_PORTFOLIO_DEMO ? (
+            <>Portfolio demo with seeded match data. No player data or API key is included.</>
+          ) : (
+            <>
+              Sample data. Run <code>npm run sync -- "Name#TAG"</code> (see <code>.env.example</code>),
+              then <code>npm run analyze</code> to see real games.
+            </>
+          )}
         </div>
       )}
 
-      <h2 className="section-title">Coach's notes</h2>
-      <div className="insights">
-        {insights.length === 0 && (
-          <div className="insight" style={{ borderLeftColor: 'var(--baseline)' }}>
-            <p className="insight-detail">
-              {agg.games < 15
-                ? `Only ${agg.games} games in this slice; most rules stay quiet under 15. Widen the filter for a clearer signal.`
-                : 'Nothing stands out in this slice.'}
-            </p>
-          </div>
-        )}
-        {shownInsights.map(insight => (
-          <div
-            className="insight"
-            key={insight.id}
-            style={{ borderLeftColor: SEVERITY[insight.severity].color }}
-          >
-            <div className="insight-head">
-              <SeverityChip severity={insight.severity} />
-              <span className="insight-title">{insight.title}</span>
+      <section
+        className={tourStep === 1 ? 'tour-emphasis' : undefined}
+        data-tour="notes"
+      >
+        <h2 className="section-title">Coach's notes</h2>
+        <div className="insights">
+          {insights.length === 0 && (
+            <div className="insight" style={{ borderLeftColor: 'var(--baseline)' }}>
+              <p className="insight-detail">
+                {agg.games < 15
+                  ? `Only ${agg.games} games in this slice; most rules stay quiet under 15. Widen the filter for a clearer signal.`
+                  : 'Nothing stands out in this slice.'}
+              </p>
             </div>
-            <p className="insight-detail">{insight.detail}</p>
-          </div>
-        ))}
-      </div>
-      {insights.length > INSIGHTS_SHOWN && (
-        <button className="ghost-btn" onClick={() => setAllInsights(v => !v)}>
-          {allInsights ? 'Show fewer notes' : `Show ${insights.length - INSIGHTS_SHOWN} more notes`}
-        </button>
-      )}
+          )}
+          {shownInsights.map(insight => (
+            <div
+              className="insight"
+              key={insight.id}
+              style={{ borderLeftColor: SEVERITY[insight.severity].color }}
+            >
+              <div className="insight-head">
+                <SeverityChip severity={insight.severity} />
+                <span className="insight-title">{insight.title}</span>
+              </div>
+              <p className="insight-detail">{insight.detail}</p>
+            </div>
+          ))}
+        </div>
+        {insights.length > INSIGHTS_SHOWN && (
+          <button className="ghost-btn" onClick={() => setAllInsights(v => !v)}>
+            {allInsights ? 'Show fewer notes' : `Show ${insights.length - INSIGHTS_SHOWN} more notes`}
+          </button>
+        )}
+      </section>
 
-      <h2 className="section-title">Patterns</h2>
-      <div className="chart-row">
-        <DeathMap matches={filtered} />
-        <TrendChart matches={filtered} metric={metric} onMetricChange={setMetric} />
-      </div>
+      <section
+        className={tourStep === 2 ? 'tour-emphasis' : undefined}
+        data-tour="patterns"
+      >
+        <h2 className="section-title">Patterns</h2>
+        <div className="chart-row">
+          <DeathMap matches={filtered} />
+          <TrendChart matches={filtered} metric={metric} onMetricChange={setMetric} />
+        </div>
+      </section>
 
       <h2 className="section-title">Replays</h2>
       <p className="section-sub">Every game replays on the map. Click one.</p>
-      <MatchTable matches={shownGames} onReplay={setReplayId} />
+      <MatchTable
+        matches={shownGames}
+        onReplay={matchId => {
+          setGuidedReplay(false)
+          setReplayId(matchId)
+        }}
+      />
       {filtered.length > GAMES_SHOWN && (
         <button className="ghost-btn" onClick={() => setAllGames(v => !v)}>
           {allGames ? 'Show recent 10 only' : `Show all ${filtered.length} games`}
@@ -445,17 +560,100 @@ function Dashboard({
       )}
 
       {replayId && (
-        <Replay slug={slug} matchId={replayId} puuid={player.puuid} onClose={() => setReplayId(null)} />
+        <Replay
+          slug={slug}
+          matchId={replayId}
+          puuid={player.puuid}
+          guided={guidedReplay}
+          selectedFocus={focusGoal?.metric ?? null}
+          onChooseFocus={chooseFocus}
+          onClose={() => {
+            setReplayId(null)
+            setGuidedReplay(false)
+            if (tourStep === 3) setTourStep(4)
+          }}
+        />
+      )}
+
+      {tourStep !== null && (
+        <GuidedTour step={tourStep} onNext={advanceTour} onClose={stopTour} />
       )}
 
       <footer>
-        Report window {window}, generated {new Date(report.generatedAt).toLocaleString()}. Wincon is
+        Report window {reportWindow}, generated {new Date(report.generatedAt).toLocaleString()}. Wincon is
         a personal project. It isn't endorsed by Riot Games and doesn't reflect the views or
         opinions of Riot Games or anyone officially involved in producing or managing League of
         Legends. League of Legends and Riot Games are trademarks or registered trademarks of Riot
         Games, Inc.
       </footer>
     </div>
+  )
+}
+
+const TOUR_STEPS = [
+  {
+    kicker: 'Player first',
+    title: 'Diagnosis, not dashboard',
+    body: 'Thirty-eight matches collapse into one clear habit that is costing this player the climb.',
+    action: 'Show the evidence',
+  },
+  {
+    kicker: 'Explainable analysis',
+    title: 'Strong signals stay; noise stays quiet',
+    body: 'Typed timeline events feed rules with sample-size gates, role benchmarks, and concrete next actions.',
+    action: 'See the patterns',
+  },
+  {
+    kicker: 'Inspectable evidence',
+    title: 'The player can challenge the verdict',
+    body: 'Deaths, lane trends, and match-level flags keep every coaching claim connected to visible evidence.',
+    action: 'Open the replay',
+  },
+  {
+    kicker: 'Moment-level coaching',
+    title: 'The metric becomes a decision',
+    body: 'The camera frames the mistake, the player, and the missing context at the exact timestamp it happened.',
+    action: 'Close the loop',
+  },
+  {
+    kicker: 'Behavior change',
+    title: 'One focus follows the player forward',
+    body: 'Today becomes the locked baseline. Only future matches count toward the next measurable target.',
+    action: 'Finish',
+  },
+]
+
+function GuidedTour({
+  step,
+  onNext,
+  onClose,
+}: {
+  step: number
+  onNext: () => void
+  onClose: () => void
+}) {
+  const current = TOUR_STEPS[step]!
+  return (
+    <aside className="tour-rail" aria-live="polite">
+      <div className="tour-progress" aria-label={`Walkthrough step ${step + 1} of ${TOUR_STEPS.length}`}>
+        {TOUR_STEPS.map((_, i) => (
+          <span key={i} className={i <= step ? 'active' : undefined} />
+        ))}
+      </div>
+      <div className="tour-copy">
+        <span>{current.kicker}</span>
+        <strong>{current.title}</strong>
+        <p>{current.body}</p>
+      </div>
+      <div className="tour-actions">
+        <button className="ghost-btn" onClick={onClose}>
+          Exit
+        </button>
+        <button className="play-btn" onClick={onNext}>
+          {current.action}
+        </button>
+      </div>
+    </aside>
   )
 }
 

@@ -25,6 +25,7 @@ import type {
 import { normalizeDuration } from '../riot/types'
 import { buildMoments, clusterMoments, type Moment, type MomentKind } from '../analysis/moments'
 import { ChampIcon, champIconUrl, useDdragonVersion } from './ddragon'
+import type { FocusMetric } from './FocusLoop'
 import { BARON_PIT, DRAGON_PIT, LANE_TOWERS, RiftBackdrop, sx, sy } from './RiftMap'
 import { useTooltip } from './shared'
 
@@ -81,21 +82,34 @@ export function Replay({
   slug,
   matchId,
   puuid,
+  guided = false,
+  selectedFocus,
+  onChooseFocus,
   onClose,
 }: {
   slug: string
   matchId: string
   puuid: string
+  guided?: boolean
+  selectedFocus: FocusMetric | null
+  onChooseFocus: (metric: FocusMetric) => void
   onClose: () => void
 }) {
   const [data, setData] = useState<RawEntry | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`/match/${slug}/${matchId}.json`)
+    const controller = new AbortController()
+    setData(null)
+    setError(null)
+    fetch(`${import.meta.env.BASE_URL}match/${slug}/${matchId}.json`, { signal: controller.signal })
       .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
       .then(setData)
-      .catch(() => setError('Could not load this match from the local cache.'))
+      .catch(err => {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setError('Could not load this match from the local cache.')
+      })
+    return () => controller.abort()
   }, [slug, matchId])
 
   useEffect(() => {
@@ -106,18 +120,55 @@ export function Replay({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [])
+
   return (
-    <div className="replay-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="replay-shell">
+    <div
+      className="replay-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Match replay"
+      onClick={e => e.target === e.currentTarget && onClose()}
+    >
+      <div className={`replay-shell${guided ? ' tour-emphasis' : ''}`}>
         {error && <div className="replay-error">{error}</div>}
         {!data && !error && <div className="replay-error">Loading replay…</div>}
-        {data && <ReplayInner data={data} puuid={puuid} onClose={onClose} />}
+        {data && (
+          <ReplayInner
+            data={data}
+            puuid={puuid}
+            guided={guided}
+            selectedFocus={selectedFocus}
+            onChooseFocus={onChooseFocus}
+            onClose={onClose}
+          />
+        )}
       </div>
     </div>
   )
 }
 
-function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; onClose: () => void }) {
+function ReplayInner({
+  data,
+  puuid,
+  guided,
+  selectedFocus,
+  onChooseFocus,
+  onClose,
+}: {
+  data: RawEntry
+  puuid: string
+  guided: boolean
+  selectedFocus: FocusMetric | null
+  onChooseFocus: (metric: FocusMetric) => void
+  onClose: () => void
+}) {
   const { match, timeline } = data
   const version = useDdragonVersion()
   const duration = normalizeDuration(match.info.gameDuration) * 1000
@@ -132,6 +183,8 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
 
   const moments = useMemo(() => buildMoments(match, timeline, puuid), [match, timeline, puuid])
   const clusters = useMemo(() => clusterMoments(moments), [moments])
+  const guidedCluster = guided ? clusters.find(cluster => cluster.some(moment => moment.autoPause)) ?? null : null
+  const initialClock = guidedCluster?.[0]?.timestamp ?? 0
 
   const kills = useMemo(
     () =>
@@ -325,13 +378,13 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   const mapTip = useTooltip()
   const timelineTip = useTooltip()
   const [hoverT, setHoverT] = useState<number | null>(null)
-  const [clock, setClock] = useState(0)
-  const [playing, setPlaying] = useState(true)
+  const [clock, setClock] = useState(initialClock)
+  const [playing, setPlaying] = useState(!guidedCluster)
   const [speed, setSpeed] = useState(1)
   const [autoPause, setAutoPause] = useState(true)
   const [showWards, setShowWards] = useState(true)
-  const [activeCluster, setActiveCluster] = useState<Moment[] | null>(null)
-  const clockRef = useRef(0)
+  const [activeCluster, setActiveCluster] = useState<Moment[] | null>(guidedCluster)
+  const clockRef = useRef(initialClock)
   const scrubbing = useRef(false)
 
   useEffect(() => {
@@ -422,6 +475,16 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return
+      const target = e.target
+      if (
+        target instanceof HTMLButtonElement ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return
+      }
       e.preventDefault()
       if (clockRef.current >= duration) {
         restart()
@@ -509,21 +572,42 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     }
   }
 
-  // Director's cut: zoom the camera to the paused event and spotlight it.
+  // Director's cut: frame EVERYTHING that matters for this pause (the event,
+  // your position, every annotation and its connector), then zoom only as
+  // tight as that content allows so nothing is cropped out of the story.
   const focusPos = activeCluster
     ? activeCluster.find(m => m.position)?.position ??
       (me ? posAt(me.participantId, activeCluster[0]!.timestamp) : null)
     : null
   const cam = (() => {
-    if (!focusPos) return { s: 1, tx: 0, ty: 0 }
-    const s = 1.8
-    const cx = clamp(sx(focusPos.x), 50 / s, 100 - 50 / s)
-    const cy = clamp(sy(focusPos.y), 50 / s, 100 - 50 / s)
+    if (!activeCluster || !focusPos) return { s: 1, tx: 0, ty: 0 }
+    const pts: { x: number; y: number }[] = []
+    for (const m of activeCluster) if (m.position) pts.push({ x: sx(m.position.x), y: sy(m.position.y) })
+    for (const note of mapNotes) {
+      pts.push({ x: sx(note.x), y: sy(note.y) })
+      if (note.from) pts.push({ x: sx(note.from.x), y: sy(note.from.y) })
+    }
+    if (me) {
+      const myPos = posAt(me.participantId, activeCluster[0]!.timestamp)
+      if (myPos) pts.push({ x: sx(myPos.x), y: sy(myPos.y) })
+    }
+    if (pts.length === 0) pts.push({ x: sx(focusPos.x), y: sy(focusPos.y) })
+    const pad = 11
+    const minX = Math.min(...pts.map(p => p.x)) - pad
+    const maxX = Math.max(...pts.map(p => p.x)) + pad
+    const minY = Math.min(...pts.map(p => p.y)) - pad
+    const maxY = Math.max(...pts.map(p => p.y)) + pad
+    const s = clamp(Math.min(100 / (maxX - minX), 100 / (maxY - minY)), 1, 1.8)
+    const cx = clamp((minX + maxX) / 2, 50 / s, 100 - 50 / s)
+    const cy = clamp((minY + maxY) / 2, 50 / s, 100 - 50 / s)
     return { s, tx: 50 - s * cx, ty: 50 - s * cy }
   })()
-  const spot = focusPos
-    ? { x: cam.tx + cam.s * sx(focusPos.x), y: cam.ty + cam.s * sy(focusPos.y) }
-    : null
+  // Spotlight only when the framing is actually tight; dimming a full-map
+  // view would hide the context the wide framing exists to show.
+  const spot =
+    focusPos && cam.s >= 1.3
+      ? { x: cam.tx + cam.s * sx(focusPos.x), y: cam.ty + cam.s * sy(focusPos.y) }
+      : null
 
   // Live tower states: match each BUILDING_KILL to the nearest known turret.
   const towerStates = useMemo(
@@ -582,6 +666,13 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   const killfeed = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < feedWindow).slice(-4)
 
   const clusterIndex = activeCluster ? clusters.indexOf(activeCluster) : -1
+  const activeFocusMetric: FocusMetric | null = activeCluster?.some(moment => moment.kind === 'death')
+    ? 'earlyDeaths'
+    : activeCluster?.some(moment => moment.kind === 'objective')
+      ? 'objectives'
+      : activeCluster?.some(moment => moment.kind === 'checkpoint')
+        ? 'csDiff10'
+        : null
 
   // Timeline geometry.
   const TL_W = 560
@@ -628,7 +719,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             {mmss(duration)}
           </span>
         </div>
-        <button className="ghost-btn replay-close" onClick={onClose}>
+        <button className="ghost-btn replay-close" onClick={onClose} autoFocus>
           Close
         </button>
       </header>
@@ -636,7 +727,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       <div className="replay-body">
         <div className="replay-stage">
           <div className="replay-map">
-            <svg viewBox="0 0 100 100" role="img" aria-label="Match replay map">
+            <svg className="replay-map-svg" viewBox="0 0 100 100" role="img" aria-label="Match replay map">
               <g
                 className="map-camera"
                 style={{ transform: `translate(${cam.tx}px, ${cam.ty}px) scale(${cam.s})` }}
@@ -933,8 +1024,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                   strokeWidth="1.5"
                 />
               ))}
-              {activeMonsters.length >= 0 &&
-                monsters.map((m, i) => (
+              {monsters.map((m, i) => (
                   <rect
                     key={`tl-obj-${i}`}
                     x={tx(m.timestamp) - 2.4}
@@ -1035,15 +1125,28 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             </span>
             <div className="speed-group">
               {SPEEDS.map(s => (
-                <button key={s} className={`chip-btn${speed === s ? ' active' : ''}`} onClick={() => setSpeed(s)}>
+                <button
+                  key={s}
+                  className={`chip-btn${speed === s ? ' active' : ''}`}
+                  aria-pressed={speed === s}
+                  onClick={() => setSpeed(s)}
+                >
                   {s}x
                 </button>
               ))}
             </div>
-            <button className={`chip-btn${showWards ? ' active' : ''}`} onClick={() => setShowWards(v => !v)}>
+            <button
+              className={`chip-btn${showWards ? ' active' : ''}`}
+              aria-pressed={showWards}
+              onClick={() => setShowWards(v => !v)}
+            >
               Wards
             </button>
-            <button className={`chip-btn${autoPause ? ' active' : ''}`} onClick={() => setAutoPause(v => !v)}>
+            <button
+              className={`chip-btn${autoPause ? ' active' : ''}`}
+              aria-pressed={autoPause}
+              onClick={() => setAutoPause(v => !v)}
+            >
               Pause at moments
             </button>
           </div>
@@ -1079,6 +1182,15 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                 ) : (
                   <button className="play-btn" onClick={restart}>
                     Watch again
+                  </button>
+                )}
+                {activeFocusMetric && (
+                  <button
+                    className="ghost-btn replay-focus-btn"
+                    aria-pressed={selectedFocus === activeFocusMetric}
+                    onClick={() => onChooseFocus(activeFocusMetric)}
+                  >
+                    {selectedFocus === activeFocusMetric ? 'Focus selected' : 'Make this my focus'}
                   </button>
                 )}
               </div>

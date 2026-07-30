@@ -30,7 +30,13 @@ export function MatchTable({
           {matches.map(m => (
             <tr key={m.matchId} className="match-row" onClick={() => onReplay(m.matchId)}>
               <td>
-                <button className="replay-btn" onClick={() => onReplay(m.matchId)}>
+                <button
+                  className="replay-btn"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onReplay(m.matchId)
+                  }}
+                >
                   <svg viewBox="0 0 12 12" aria-hidden="true">
                     <path d="M3.5 2.2 L9.8 6 L3.5 9.8 Z" fill="currentColor" />
                   </svg>

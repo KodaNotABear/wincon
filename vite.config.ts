@@ -3,6 +3,8 @@ import https from 'node:https'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import { buildClimbReport } from './src/analysis/report'
+import { DEMO_PLAYER, generateDataset } from './src/fixtures/synthetic'
 import { readLockfile } from './src/lcu/lockfile'
 import { syncAndAnalyze } from './src/server/syncPlayer'
 
@@ -123,6 +125,54 @@ const apiSync = (): Plugin => ({
   },
 })
 
-export default defineConfig({
-  plugins: [react(), serveData(), lcuProxy(), apiSync()],
+const portfolioDemo = (): Plugin => ({
+  name: 'portfolio-demo',
+  apply: 'build',
+  generateBundle() {
+    const slug = `${DEMO_PLAYER.gameName}-${DEMO_PLAYER.tagLine}`.toLowerCase()
+    const entries = generateDataset(7, 24)
+    const generatedAt = '2026-07-30T12:00:00.000Z'
+    const report = buildClimbReport(entries, DEMO_PLAYER, { isDemo: true, generatedAt })
+    const json = (value: unknown) => JSON.stringify(value)
+
+    this.emitFile({
+      type: 'asset',
+      fileName: 'players.json',
+      source: json([
+        {
+          slug,
+          gameName: DEMO_PLAYER.gameName,
+          tagLine: DEMO_PLAYER.tagLine,
+          region: DEMO_PLAYER.region,
+          games: report.matches.length,
+          generatedAt,
+        },
+      ]),
+    })
+    this.emitFile({ type: 'asset', fileName: `report/${slug}.json`, source: json(report) })
+    for (const entry of entries) {
+      this.emitFile({
+        type: 'asset',
+        fileName: `match/${slug}/${entry.match.metadata.matchId}.json`,
+        source: json(entry),
+      })
+    }
+  },
+})
+
+export default defineConfig(() => {
+  const isPortfolioDemo = process.env.WINCON_STATIC_DEMO === 'true'
+  return {
+    base: process.env.WINCON_BASE ?? '/',
+    define: {
+      'import.meta.env.VITE_PORTFOLIO_DEMO': JSON.stringify(isPortfolioDemo),
+    },
+    plugins: [
+      react(),
+      serveData(),
+      lcuProxy(),
+      apiSync(),
+      ...(isPortfolioDemo ? [portfolioDemo()] : []),
+    ],
+  }
 })

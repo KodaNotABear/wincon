@@ -36,7 +36,10 @@ export function useCountUp(target: number | null, duration = 650): number | null
     let raf = 0
     const start = performance.now()
     const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / duration)
+      // Some browsers can hand the first rAF callback a timestamp just before
+      // the performance.now() value above. Clamp both ends so stats never
+      // flash negative while their entrance animation starts.
+      const t = Math.max(0, Math.min(1, (now - start) / duration))
       const eased = 1 - (1 - t) ** 3
       setValue(target * eased)
       if (t < 1) raf = requestAnimationFrame(tick)

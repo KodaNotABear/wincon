@@ -61,6 +61,18 @@ npm run dev
 
 `npm test` runs the analysis test suite; `npm run typecheck` runs strict tsc.
 
+### Portfolio build
+
+The hosted demo bundles the seeded player report and all replay timelines as
+static files. It does not include an API key or personal match data.
+
+```sh
+WINCON_STATIC_DEMO=true WINCON_BASE=/wincon/ npm run build
+```
+
+The generated `dist/` directory can be served from `/wincon/` on any static
+host.
+
 ## Design notes
 
 - **Rate limiting is client-side and proactive.** Development keys allow
