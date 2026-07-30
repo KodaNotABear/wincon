@@ -18,6 +18,10 @@ opinionated coaching notes:
   dragons, heralds, and barons.
 - **Wins vs losses**: which measurable habit differs most between your wins and
   your losses.
+- **Replay**: any game replays on an animated map, all ten champions moving
+  along their timeline positions with kill and objective pings, and the replay
+  auto-pauses at coaching moments (your deaths with context, objectives taken
+  without you, the 10:00 laning checkpoint) to tell you what just happened.
 
 ## How it works
 
@@ -44,12 +48,14 @@ npm run demo     # synthetic sample data, no API key needed
 npm run dev      # open the dashboard
 ```
 
-With your own games:
+With real games (yours or anyone's; players are not hardcoded, and each synced
+player gets a directory under `data/players/` plus an entry in the dashboard's
+player switcher):
 
 ```
-cp .env.example .env   # add your key from developer.riotgames.com + Riot ID
-npm run sync           # pull your recent ranked games (cached to data/)
-npm run analyze        # build data/report.json and print the coaching notes
+cp .env.example .env             # add your key from developer.riotgames.com
+npm run sync -- "YourName#NA1"   # pull recent ranked games (cached per player)
+npm run analyze                  # build the report and print the coaching notes
 npm run dev
 ```
 

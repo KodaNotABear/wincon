@@ -1,33 +1,62 @@
 import { useEffect, useMemo, useState } from 'react'
-import { buildAggregate, type ClimbReport, type MatchReport } from '../analysis/report'
+import { buildAggregate, type ClimbReport } from '../analysis/report'
 import { buildInsights } from '../analysis/insights'
 import { DeathMap } from './DeathMap'
 import { LivePanel } from './LivePanel'
 import { MatchTable } from './MatchTable'
+import { Replay } from './Replay'
 import { TrendChart, type TrendMetric } from './TrendChart'
-import { SEVERITY, SeverityChip, fmtSigned } from './shared'
+import { SEVERITY, SeverityChip, fmtSigned, useCountUp } from './shared'
 
 const INSIGHTS_SHOWN = 4
 const GAMES_SHOWN = 10
 
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'missing' }
-  | { status: 'ready'; report: ClimbReport }
+interface PlayerEntry {
+  slug: string
+  gameName: string
+  tagLine: string
+  region: string
+  games: number
+  generatedAt: string | null
+}
 
 export function App() {
-  const [state, setState] = useState<LoadState>({ status: 'loading' })
+  const [players, setPlayers] = useState<PlayerEntry[] | null>(null)
+  const [slug, setSlug] = useState<string | null>(null)
+  const [report, setReport] = useState<ClimbReport | null>(null)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
-    fetch('/report.json')
-      .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((report: ClimbReport) => setState({ status: 'ready', report }))
-      .catch(() => setState({ status: 'missing' }))
+    fetch('/players.json')
+      .then(res => (res.ok ? res.json() : []))
+      .then((list: PlayerEntry[]) => {
+        const withReports = list.filter(p => p.games > 0)
+        setPlayers(withReports)
+        if (withReports.length) setSlug(withReports[0]!.slug)
+        else setFailed(true)
+      })
+      .catch(() => setFailed(true))
   }, [])
 
-  if (state.status === 'loading') return null
-  if (state.status === 'missing') return <Onboarding />
-  return <Dashboard report={state.report} />
+  useEffect(() => {
+    if (!slug) return
+    setReport(null)
+    fetch(`/report/${slug}.json`)
+      .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then(setReport)
+      .catch(() => setFailed(true))
+  }, [slug])
+
+  if (failed) return <Onboarding />
+  if (!players || !slug || !report) return null
+  return (
+    <Dashboard
+      report={report}
+      slug={slug}
+      players={players}
+      onSelectPlayer={setSlug}
+    />
+  )
 }
 
 function Brand() {
@@ -55,17 +84,17 @@ function Onboarding() {
       <div className="onboard">
         <Brand />
         <p>
-          Find your win condition. Wincon pulls your recent ranked games from the Riot API and
-          tells you why you lost, not just that you did. No report found yet; two ways to get one:
+          Find your win condition. Wincon pulls recent ranked games from the Riot API, replays them,
+          and tells you why you lost, not just that you did. No players synced yet; two ways in:
         </p>
         <ol>
           <li>
             <strong>Sample data, no setup:</strong> <code>npm run demo</code>, then refresh this page.
           </li>
           <li>
-            <strong>Your own games:</strong> copy <code>.env.example</code> to <code>.env</code>, add a
-            key from <code>developer.riotgames.com</code> and your Riot ID, then run{' '}
-            <code>npm run sync</code> followed by <code>npm run analyze</code>.
+            <strong>Any real player:</strong> copy <code>.env.example</code> to <code>.env</code>, add a key
+            from <code>developer.riotgames.com</code>, then run{' '}
+            <code>npm run sync -- "Name#TAG"</code> followed by <code>npm run analyze</code>.
           </li>
         </ol>
       </div>
@@ -81,13 +110,24 @@ const ROLE_LABELS: Record<string, string> = {
   UTILITY: 'Support',
 }
 
-function Dashboard({ report }: { report: ClimbReport }) {
+function Dashboard({
+  report,
+  slug,
+  players,
+  onSelectPlayer,
+}: {
+  report: ClimbReport
+  slug: string
+  players: PlayerEntry[]
+  onSelectPlayer: (slug: string) => void
+}) {
   const { player } = report
   const [allInsights, setAllInsights] = useState(false)
   const [allGames, setAllGames] = useState(false)
   const [roleFilter, setRoleFilter] = useState<string | null>(null)
   const [champFilter, setChampFilter] = useState<string | null>(null)
   const [metric, setMetric] = useState<TrendMetric>('csDiff10')
+  const [replayId, setReplayId] = useState<string | null>(null)
 
   // The whole dashboard recomputes from the filtered subset: the analysis
   // layer is pure functions shared with the CLI, so filtering is just
@@ -130,9 +170,19 @@ function Dashboard({ report }: { report: ClimbReport }) {
           <span className="tagline">find your win condition</span>
         </div>
         <span className="player-line">
-          <strong>
-            {player.gameName}#{player.tagLine}
-          </strong>{' '}
+          {players.length > 1 ? (
+            <select className="mini-select" value={slug} onChange={e => onSelectPlayer(e.target.value)}>
+              {players.map(p => (
+                <option key={p.slug} value={p.slug}>
+                  {p.gameName}#{p.tagLine}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <strong>
+              {player.gameName}#{player.tagLine}
+            </strong>
+          )}{' '}
           · {report.matches.length} ranked games · {window}
         </span>
       </header>
@@ -184,24 +234,30 @@ function Dashboard({ report }: { report: ClimbReport }) {
       </div>
 
       <div className="stat-strip">
+        <Stat value={agg.avgCsDiff10} format={v => fmtSigned(v)} label="CS diff at 10:00" />
         <Stat
-          value={agg.avgCsDiff10 !== null ? fmtSigned(agg.avgCsDiff10) : '·'}
-          label="CS diff at 10:00"
+          value={agg.games ? agg.deathsByPhasePerGame.early : null}
+          format={v => v.toFixed(1)}
+          label="deaths before 14:00"
         />
-        <Stat value={agg.games ? agg.deathsByPhasePerGame.early.toFixed(1) : '·'} label="deaths before 14:00" />
         <Stat
-          value={agg.objectiveParticipation !== null ? `${Math.round(agg.objectiveParticipation * 100)}%` : '·'}
+          value={agg.objectiveParticipation !== null ? agg.objectiveParticipation * 100 : null}
+          format={v => `${Math.round(v)}%`}
           label="objective participation"
         />
-        <Stat value={agg.games ? agg.avgVisionPerMin.toFixed(2) : '·'} label="vision per minute" />
+        <Stat
+          value={agg.games ? agg.avgVisionPerMin : null}
+          format={v => v.toFixed(2)}
+          label="vision per minute"
+        />
       </div>
 
       <LivePanel matches={report.matches} />
 
       {report.isDemo && (
         <div className="demo-banner">
-          Sample data. Run <code>npm run sync</code> with your own Riot ID (see <code>.env.example</code>),
-          then <code>npm run analyze</code> to see your games.
+          Sample data. Run <code>npm run sync -- "Name#TAG"</code> (see <code>.env.example</code>), then{' '}
+          <code>npm run analyze</code> to see real games.
         </div>
       )}
 
@@ -243,11 +299,15 @@ function Dashboard({ report }: { report: ClimbReport }) {
       </div>
 
       <h2 className="section-title">Game by game</h2>
-      <MatchTable matches={shownGames} />
+      <MatchTable matches={shownGames} onReplay={setReplayId} />
       {filtered.length > GAMES_SHOWN && (
         <button className="ghost-btn" onClick={() => setAllGames(v => !v)}>
           {allGames ? 'Show recent 10 only' : `Show all ${filtered.length} games`}
         </button>
+      )}
+
+      {replayId && (
+        <Replay slug={slug} matchId={replayId} puuid={player.puuid} onClose={() => setReplayId(null)} />
       )}
 
       <footer>
@@ -261,10 +321,19 @@ function Dashboard({ report }: { report: ClimbReport }) {
   )
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+function Stat({
+  value,
+  format,
+  label,
+}: {
+  value: number | null
+  format: (v: number) => string
+  label: string
+}) {
+  const animated = useCountUp(value)
   return (
     <div className="stat">
-      <span className="stat-value">{value}</span>
+      <span className="stat-value">{animated !== null ? format(animated) : '·'}</span>
       <span className="stat-label">{label}</span>
     </div>
   )

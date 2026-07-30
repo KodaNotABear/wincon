@@ -1,12 +1,19 @@
 import type { MatchReport } from '../analysis/report'
 import { SEVERITY, fmtSigned } from './shared'
 
-export function MatchTable({ matches }: { matches: MatchReport[] }) {
+export function MatchTable({
+  matches,
+  onReplay,
+}: {
+  matches: MatchReport[]
+  onReplay: (matchId: string) => void
+}) {
   return (
     <div className="table-wrap">
       <table>
         <thead>
           <tr>
+            <th aria-label="Replay" />
             <th>Date</th>
             <th>Matchup</th>
             <th>Role</th>
@@ -21,6 +28,14 @@ export function MatchTable({ matches }: { matches: MatchReport[] }) {
         <tbody>
           {matches.map(m => (
             <tr key={m.matchId}>
+              <td>
+                <button className="replay-btn" onClick={() => onReplay(m.matchId)}>
+                  <svg viewBox="0 0 12 12" aria-hidden="true">
+                    <path d="M3.5 2.2 L9.8 6 L3.5 9.8 Z" fill="currentColor" />
+                  </svg>
+                  Replay
+                </button>
+              </td>
               <td>{new Date(m.gameCreation).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</td>
               <td className="matchup">
                 {m.championName} <span className="vs">vs {m.opponentChampion ?? '?'}</span>
