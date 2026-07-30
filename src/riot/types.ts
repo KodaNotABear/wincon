@@ -87,6 +87,10 @@ export interface ChampionKillEvent {
   victimId: number
   assistingParticipantIds?: number[]
   position: Position
+  /** Base kill gold paid to the killer. */
+  bounty?: number
+  /** Extra shutdown gold on top of the base bounty. */
+  shutdownBounty?: number
 }
 
 export interface EliteMonsterKillEvent {
@@ -98,6 +102,7 @@ export interface EliteMonsterKillEvent {
   monsterSubType?: string
   assistingParticipantIds?: number[]
   position: Position
+  bounty?: number
 }
 
 export interface BuildingKillEvent {

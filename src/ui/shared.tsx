@@ -58,7 +58,7 @@ export interface TipState {
 export function useTooltip() {
   const [tip, setTip] = useState<TipState | null>(null)
   const show = (e: React.MouseEvent, title: string, lines: string[]) => {
-    const host = (e.currentTarget as Element).closest('.panel, .replay-map')
+    const host = (e.currentTarget as Element).closest('.panel, .replay-map, .timeline-wrap')
     if (!host) return
     const rect = host.getBoundingClientRect()
     setTip({ x: e.clientX - rect.left, y: e.clientY - rect.top, title, lines })

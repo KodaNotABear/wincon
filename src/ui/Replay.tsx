@@ -144,6 +144,8 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             killerId: e.killerId,
             victimId: e.victimId,
             victimTeam: (e.victimId <= 5 ? 100 : 200) as 100 | 200,
+            bounty: e.bounty ?? 0,
+            shutdown: e.shutdownBounty ?? 0,
           })),
       ),
     [timeline],
@@ -158,6 +160,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             position: e.position,
             team: e.killerTeamId,
             monsterType: e.monsterType,
+            bounty: e.bounty ?? 0,
           })),
       ),
     [timeline],
@@ -321,6 +324,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
 
   const mapTip = useTooltip()
   const timelineTip = useTooltip()
+  const [hoverT, setHoverT] = useState<number | null>(null)
   const [clock, setClock] = useState(0)
   const [playing, setPlaying] = useState(true)
   const [speed, setSpeed] = useState(1)
@@ -596,6 +600,15 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     const rect = e.currentTarget.getBoundingClientRect()
     seek(((e.clientX - rect.left) / rect.width) * duration)
   }
+
+  const fmtGold = (g: number) => `${g >= 0 ? '+' : '-'}${Math.abs(Math.round(g)).toLocaleString()}g`
+  /** Measured team-gold movement in the minute after an event. */
+  const swingLine = (ts: number) =>
+    `Team gold swing over the next minute: ${fmtGold(leadAt(Math.min(ts + 60_000, duration)) - leadAt(ts))}.`
+  const bountyLine = (verb: string, bounty: number, shutdown: number) =>
+    bounty + shutdown > 0
+      ? `${verb} ${(bounty + shutdown).toLocaleString()}g${shutdown > 0 ? ` (${bounty.toLocaleString()} kill + ${shutdown.toLocaleString()} shutdown bounty)` : ''}.`
+      : null
 
   const myDeathMarks = me ? kills.filter(k => k.victimId === me.participantId) : []
   const myKillMarks = me ? kills.filter(k => k.killerId === me.participantId) : []
@@ -883,6 +896,19 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
               }}
               onPointerMove={e => scrubbing.current && seekFromPointer(e)}
               onPointerUp={() => (scrubbing.current = false)}
+              onMouseMove={e => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const t = clamp(((e.clientX - rect.left) / rect.width) * duration, 0, duration)
+                setHoverT(t)
+                const lead = leadAt(t)
+                timelineTip.show(e, mmss(t), [
+                  `${lead >= 0 ? 'Your team' : 'Enemy team'} up ${Math.abs(Math.round(lead)).toLocaleString()}g`,
+                ])
+              }}
+              onMouseLeave={() => {
+                setHoverT(null)
+                timelineTip.hide()
+              }}
             >
               <defs>
                 <clipPath id="tl-above">
@@ -919,11 +945,17 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                     fill={m.team === me?.teamId ? 'var(--status-warn)' : 'var(--surface)'}
                     stroke="var(--status-warn)"
                     strokeWidth="1"
-                    onMouseMove={e =>
-                      timelineTip.show(e, `${mmss(m.timestamp)} — ${m.team === me?.teamId ? 'Objective secured' : 'Objective lost'}`, [
-                        `Gold swing context: ${leadAt(m.timestamp) >= 0 ? '+' : ''}${Math.round(leadAt(m.timestamp)).toLocaleString()} at the time.`,
-                      ])
-                    }
+                    onMouseMove={e => {
+                      e.stopPropagation()
+                      timelineTip.show(
+                        e,
+                        `${mmss(m.timestamp)} — ${m.team === me?.teamId ? 'Objective secured' : 'Objective lost'}`,
+                        [
+                          bountyLine(m.team === me?.teamId ? 'Paid your team' : 'Paid the enemy', m.bounty, 0),
+                          swingLine(m.timestamp),
+                        ].filter((line): line is string => line !== null),
+                      )
+                    }}
                     onMouseLeave={timelineTip.hide}
                   />
                 ))}
@@ -936,18 +968,32 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                   fill="var(--status-good)"
                   stroke="var(--surface)"
                   strokeWidth="1"
-                  onMouseMove={e =>
-                    timelineTip.show(e, `${mmss(k.timestamp)} — You killed ${champByPid.get(k.victimId) ?? '?'}`, [])
-                  }
+                  onMouseMove={e => {
+                    e.stopPropagation()
+                    timelineTip.show(
+                      e,
+                      `${mmss(k.timestamp)} — You killed ${champByPid.get(k.victimId) ?? '?'}`,
+                      [bountyLine('Earned', k.bounty, k.shutdown), swingLine(k.timestamp)].filter(
+                        (line): line is string => line !== null,
+                      ),
+                    )
+                  }}
                   onMouseLeave={timelineTip.hide}
                 />
               ))}
               {myDeathMarks.map((k, i) => (
                 <g
                   key={`tl-d-${i}`}
-                  onMouseMove={e =>
-                    timelineTip.show(e, `${mmss(k.timestamp)} — Died to ${champByPid.get(k.killerId) ?? 'the enemy team'}`, [])
-                  }
+                  onMouseMove={e => {
+                    e.stopPropagation()
+                    timelineTip.show(
+                      e,
+                      `${mmss(k.timestamp)} — Died to ${champByPid.get(k.killerId) ?? 'the enemy team'}`,
+                      [bountyLine('Handed the enemy', k.bounty, k.shutdown), swingLine(k.timestamp)].filter(
+                        (line): line is string => line !== null,
+                      ),
+                    )
+                  }}
                   onMouseLeave={timelineTip.hide}
                 >
                   <circle cx={tx(k.timestamp)} cy={ty(leadAt(k.timestamp))} r="3.2" fill="var(--status-critical)" stroke="var(--surface)" strokeWidth="1" />
@@ -959,6 +1005,12 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                   />
                 </g>
               ))}
+              {hoverT !== null && (
+                <g pointerEvents="none">
+                  <line x1={tx(hoverT)} x2={tx(hoverT)} y1={plotTop} y2={plotBot} stroke="var(--baseline)" strokeWidth="1" />
+                  <circle cx={tx(hoverT)} cy={ty(leadAt(hoverT))} r="2.6" fill="var(--ink)" stroke="var(--surface)" strokeWidth="1" />
+                </g>
+              )}
               <text x="4" y={plotTop + 6}>{`+${Math.round(maxLead / 1000)}k`}</text>
               <text x="4" y={plotBot}>{`-${Math.round(maxLead / 1000)}k`}</text>
               <line
