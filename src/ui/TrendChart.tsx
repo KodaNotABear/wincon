@@ -5,7 +5,24 @@ const W = 560
 const H = 210
 const TOP = 16
 const BOTTOM = 26
-const LEFT = 34
+const LEFT = 40
+
+export type TrendMetric = 'csDiff10' | 'goldDiff14'
+
+const METRICS: Record<TrendMetric, { label: string; sub: string; floor: number; pick: (m: MatchReport) => number | null }> = {
+  csDiff10: {
+    label: 'CS diff at 10:00',
+    sub: 'CS difference vs your lane opponent at 10:00, oldest game first.',
+    floor: 10,
+    pick: m => m.laning.csDiff10,
+  },
+  goldDiff14: {
+    label: 'Gold diff at 14:00',
+    sub: 'Gold difference vs your lane opponent at 14:00, oldest game first.',
+    floor: 400,
+    pick: m => m.laning.goldDiff14,
+  },
+}
 
 /** Bar with a rounded far end, anchored square to the zero baseline. */
 function barPath(x: number, y0: number, height: number, width: number, up: boolean): string {
@@ -24,25 +41,50 @@ function barPath(x: number, y0: number, height: number, width: number, up: boole
   ].join(' ')
 }
 
-export function TrendChart({ matches }: { matches: MatchReport[] }) {
+export function TrendChart({
+  matches,
+  metric,
+  onMetricChange,
+}: {
+  matches: MatchReport[]
+  metric: TrendMetric
+  onMetricChange: (m: TrendMetric) => void
+}) {
   const tooltip = useTooltip()
+  const spec = METRICS[metric]
   // Report order is newest first; plot oldest to newest, left to right.
   const games = [...matches].reverse()
-  const values = games.map(m => m.laning.csDiff10)
-  const maxAbs = Math.max(10, ...values.filter((v): v is number => v !== null).map(Math.abs))
+  const values = games.map(spec.pick)
+  const maxAbs = Math.max(spec.floor, ...values.filter((v): v is number => v !== null).map(Math.abs))
 
   const plotW = W - LEFT - 8
   const plotH = H - TOP - BOTTOM
   const y0 = TOP + plotH / 2
   const scale = plotH / 2 / maxAbs
-  const step = plotW / games.length
+  const step = games.length ? plotW / games.length : plotW
   const barW = Math.max(3, Math.min(16, step - 2))
+
+  const axisLabel = (v: number) =>
+    metric === 'goldDiff14' && Math.abs(v) >= 1000 ? `${fmtSigned(v / 1000, 1)}k` : fmtSigned(v, 0)
 
   return (
     <div className="panel">
-      <h3>Laning trend</h3>
-      <div className="panel-sub">CS difference vs your lane opponent at 10:00, oldest game first.</div>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="CS difference at ten minutes per game">
+      <div className="panel-head">
+        <h3>Laning trend</h3>
+        <select
+          className="mini-select"
+          value={metric}
+          onChange={e => onMetricChange(e.target.value as TrendMetric)}
+        >
+          {Object.entries(METRICS).map(([key, m]) => (
+            <option key={key} value={key}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="panel-sub">{spec.sub}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${spec.label} per game`}>
         {[maxAbs, 0, -maxAbs].map(v => (
           <g key={v}>
             <line
@@ -54,12 +96,12 @@ export function TrendChart({ matches }: { matches: MatchReport[] }) {
               strokeWidth="1"
             />
             <text x={LEFT - 6} y={y0 - v * scale + 3} textAnchor="end">
-              {fmtSigned(v, 0)}
+              {axisLabel(v)}
             </text>
           </g>
         ))}
         {games.map((m, i) => {
-          const v = m.laning.csDiff10
+          const v = spec.pick(m)
           const x = LEFT + i * step + (step - barW) / 2
           if (v === null) {
             // No lane opponent (or a remake): show a neutral tick, not a zero bar.
@@ -79,7 +121,7 @@ export function TrendChart({ matches }: { matches: MatchReport[] }) {
                 fill="transparent"
                 onMouseMove={e =>
                   tooltip.show(e, `${m.championName} vs ${m.opponentChampion ?? '?'}`, [
-                    `${m.win ? 'Win' : 'Loss'} · ${fmtSigned(v, 0)} CS at 10:00`,
+                    `${m.win ? 'Win' : 'Loss'} · ${axisLabel(v)} (${spec.label.toLowerCase()})`,
                     new Date(m.gameCreation).toLocaleDateString(),
                   ])
                 }

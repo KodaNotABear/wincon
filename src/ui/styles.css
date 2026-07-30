@@ -124,6 +124,104 @@ body {
   color: var(--muted);
 }
 
+/* Filter bar */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.chip-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.chip-btn:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+.chip-btn.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--page);
+}
+.mini-select {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.filter-count {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+/* Live champ-select panel (LCU) */
+.live-panel,
+.live-idle {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 13.5px;
+}
+.live-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-good);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.live-idle {
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 2px 2px 0;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-good);
+  align-self: center;
+  flex: none;
+}
+.live-detail {
+  color: var(--ink-2);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.legend-toggle {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.legend-toggle.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
 .demo-banner {
   background: var(--surface);
   border: 1px solid var(--border);

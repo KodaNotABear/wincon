@@ -1,7 +1,11 @@
-// Rule-based coaching notes. Each rule looks at the aggregate (or one match)
-// and either stays silent or emits a note with a severity and a concrete
+// Rule-based coaching notes. Each rule looks at the aggregate (or the match
+// list) and either stays silent or emits a note with a severity and a concrete
 // "so what". The bar for emitting is deliberately high: a report with three
 // pointed notes beats one with fifteen vague ones.
+//
+// Rules that judge habits use recency weighting so the report tracks who you
+// are becoming, not who you were 40 games ago. Re-running after a playstyle
+// change should visibly change the notes.
 
 import { benchmarkFor } from './benchmarks'
 import type { Aggregate, MatchReport } from './report'
@@ -16,8 +20,163 @@ export interface Insight {
 }
 
 const fmt = (x: number, digits = 1) => (x >= 0 ? '+' : '') + x.toFixed(digits)
+const pct = (x: number) => `${Math.round(x * 100)}%`
 
-export function buildInsights(agg: Aggregate): Insight[] {
+// A game's influence halves every HALF_LIFE games of age, so the newest
+// stretch dominates champion guidance within days of a habit change.
+const HALF_LIFE = 12
+
+interface ChampScore {
+  name: string
+  games: number
+  wins: number
+  weight: number
+  weightedWins: number
+  recentTen: number
+}
+
+/** matches must be newest first (report order). */
+function scoreChampions(matches: MatchReport[]): ChampScore[] {
+  const byChamp = new Map<string, ChampScore>()
+  matches.forEach((m, age) => {
+    const entry = byChamp.get(m.championName) ?? {
+      name: m.championName,
+      games: 0,
+      wins: 0,
+      weight: 0,
+      weightedWins: 0,
+      recentTen: 0,
+    }
+    const w = 0.5 ** (age / HALF_LIFE)
+    entry.games += 1
+    entry.wins += m.win ? 1 : 0
+    entry.weight += w
+    entry.weightedWins += m.win ? w : 0
+    if (age < 10) entry.recentTen += 1
+    byChamp.set(m.championName, entry)
+  })
+  return [...byChamp.values()]
+}
+
+function championGuidance(agg: Aggregate, matches: MatchReport[]): Insight | null {
+  const poolSize = Object.keys(agg.championCounts).length
+  if (agg.games < 15) return null
+
+  if (matches.length === 0) {
+    // No per-match data (shouldn't happen in practice); fall back to counts.
+    if (poolSize <= 6) return null
+    const top = Object.entries(agg.championCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([name]) => name)
+      .join(' and ')
+    return {
+      id: 'wide-champ-pool',
+      severity: 'warn',
+      title: 'Your champion pool is too wide to climb with',
+      detail: `${poolSize} different champions in ${agg.games} games. Mastery beats variety for climbing; consider narrowing to ${top} plus one backup.`,
+    }
+  }
+
+  const scored = scoreChampions(matches)
+
+  // An emerging main: someone you keep picking right now. Recognize the
+  // commitment while it's happening instead of prescribing last month's picks.
+  const emerging = scored
+    .filter(c => c.recentTen >= 4)
+    .sort((a, b) => b.recentTen - a.recentTen)[0]
+  if (emerging) {
+    const wr = emerging.wins / emerging.games
+    if (wr >= 0.5) {
+      return {
+        id: 'emerging-main',
+        severity: 'good',
+        title: `${emerging.name} is becoming your main, and it's working`,
+        detail: `${emerging.recentTen} of your last 10 games on ${emerging.name} at ${pct(wr)} overall (${emerging.wins}W ${emerging.games - emerging.wins}L). Commitment is how climbs happen; keep queueing them.`,
+      }
+    }
+    return {
+      id: 'emerging-main-struggling',
+      severity: 'info',
+      title: `You're committing to ${emerging.name}; the results aren't there yet`,
+      detail: `${emerging.recentTen} of your last 10 games on ${emerging.name}, but ${pct(wr)} winrate over ${emerging.games} games. Champion mastery usually takes 20+ games to pay off; give it that long before judging, and review the losses on them specifically.`,
+    }
+  }
+
+  if (poolSize > 6) {
+    // No current commitment: recommend by recency-weighted winrate, so the
+    // suggestion follows what is working for you NOW, with a small floor so
+    // one lucky game doesn't top the list.
+    const score = (c: ChampScore) => c.weightedWins / Math.max(c.weight, 0.01) + c.weight * 0.02
+    const best = scored
+      .filter(c => c.games >= 3)
+      .sort((a, b) => score(b) - score(a))
+      .slice(0, 2)
+    const naming = best.length
+      ? best.map(c => `${c.name} (${pct(c.wins / c.games)} in ${c.games})`).join(' and ')
+      : Object.entries(agg.championCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([n]) => n).join(' and ')
+    return {
+      id: 'wide-champ-pool',
+      severity: 'warn',
+      title: 'Your champion pool is too wide to climb with',
+      detail: `${poolSize} different champions in ${agg.games} games and no champion in more than a few of your recent picks. Mastery beats variety; based on recent results your best bets are ${naming}. Pick one, or pick someone new, but commit.`,
+    }
+  }
+  return null
+}
+
+/** Recent half vs older half: is the sample trending anywhere? */
+function momentum(matches: MatchReport[]): Insight | null {
+  if (matches.length < 16) return null
+  const half = Math.floor(matches.length / 2)
+  const recent = matches.slice(0, half)
+  const older = matches.slice(half)
+
+  const winrate = (xs: MatchReport[]) => xs.filter(m => m.win).length / xs.length
+  const earlyDeaths = (xs: MatchReport[]) =>
+    xs.reduce((a, m) => a + m.deathsByPhase.early, 0) / xs.length
+  const csDiff = (xs: MatchReport[]) => {
+    const vals = xs.map(m => m.laning.csDiff10).filter((v): v is number => v !== null)
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+  }
+
+  const wrDelta = winrate(recent) - winrate(older)
+  if (Math.abs(wrDelta) >= 0.12) {
+    const up = wrDelta > 0
+    return {
+      id: 'momentum',
+      severity: up ? 'good' : 'warn',
+      title: up ? 'Your recent games are trending up' : 'Your recent games are trending down',
+      detail: `Last ${half} games: ${pct(winrate(recent))} winrate vs ${pct(winrate(older))} in the ${matches.length - half} before them. ${up ? 'Whatever changed, protect it.' : 'Worth asking what changed: champions, role, schedule, or tilt-queueing.'}`,
+    }
+  }
+
+  const edDelta = earlyDeaths(recent) - earlyDeaths(older)
+  if (Math.abs(edDelta) >= 0.6) {
+    const down = edDelta < 0
+    return {
+      id: 'momentum',
+      severity: down ? 'good' : 'warn',
+      title: down ? 'Early deaths are trending down' : 'Early deaths are creeping up',
+      detail: `${earlyDeaths(older).toFixed(1)} per game in your older half vs ${earlyDeaths(recent).toFixed(1)} in your last ${half}. ${down ? 'That is the single best predictor in this report; keep it going.' : 'The laning phase is getting bloodier; slow it down.'}`,
+    }
+  }
+
+  const csRecent = csDiff(recent)
+  const csOlder = csDiff(older)
+  if (csRecent !== null && csOlder !== null && Math.abs(csRecent - csOlder) >= 6) {
+    const up = csRecent > csOlder
+    return {
+      id: 'momentum',
+      severity: up ? 'good' : 'warn',
+      title: up ? 'Laning is improving' : 'Laning is slipping',
+      detail: `CS diff at 10:00 moved from ${fmt(csOlder)} to ${fmt(csRecent)} across your last ${half} games.`,
+    }
+  }
+  return null
+}
+
+export function buildInsights(agg: Aggregate, matches: MatchReport[]): Insight[] {
   const out: Insight[] = []
   const bench = benchmarkFor(agg.primaryRole)
 
@@ -68,7 +227,7 @@ export function buildInsights(agg: Aggregate): Insight[] {
       id: 'low-obj-participation',
       severity: 'warn',
       title: 'You are absent when objectives are taken',
-      detail: `You are credited on ${Math.round(agg.objectiveParticipation * 100)}% of your team's epic monsters. Emerald games are decided at dragon and baron; start rotating 30 seconds before spawns instead of taking one more wave.`,
+      detail: `You are credited on ${pct(agg.objectiveParticipation)} of your team's epic monsters. Emerald games are decided at dragon and baron; start rotating 30 seconds before spawns instead of taking one more wave.`,
     })
   }
 
@@ -81,16 +240,11 @@ export function buildInsights(agg: Aggregate): Insight[] {
     })
   }
 
-  const pool = Object.entries(agg.championCounts).sort((a, b) => b[1] - a[1])
-  if (pool.length > 6 && agg.games >= 15) {
-    const top = pool.slice(0, 2).map(([name]) => name).join(' and ')
-    out.push({
-      id: 'wide-champ-pool',
-      severity: 'warn',
-      title: 'Your champion pool is too wide to climb with',
-      detail: `${pool.length} different champions in ${agg.games} games. Mastery beats variety for climbing; consider narrowing to ${top} plus one backup.`,
-    })
-  }
+  const champInsight = championGuidance(agg, matches)
+  if (champInsight) out.push(champInsight)
+
+  const momentumInsight = momentum(matches)
+  if (momentumInsight) out.push(momentumInsight)
 
   // Which measurable habit differs most between your wins and your losses?
   const biggest = [...agg.winLossGaps].sort((a, b) => {

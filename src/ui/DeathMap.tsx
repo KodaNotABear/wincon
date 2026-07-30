@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { MatchReport } from '../analysis/report'
 import type { Phase } from '../analysis/metrics'
 import { MAP_MAX } from '../analysis/metrics'
@@ -17,15 +18,27 @@ const sy = (y: number) => 100 - (y / MAP_MAX) * 100
 
 export function DeathMap({ matches }: { matches: MatchReport[] }) {
   const tooltip = useTooltip()
-  const deaths = matches.flatMap(m =>
+  const [hidden, setHidden] = useState<Set<Phase>>(new Set())
+
+  const togglePhase = (phase: Phase) =>
+    setHidden(prev => {
+      const next = new Set(prev)
+      if (next.has(phase)) next.delete(phase)
+      else next.add(phase)
+      return next
+    })
+
+  const all = matches.flatMap(m =>
     m.deathList.map(d => ({ ...d, championName: m.championName, win: m.win })),
   )
+  const deaths = all.filter(d => !hidden.has(d.phase))
 
   return (
     <div className="panel">
       <h3>Where you die</h3>
       <div className="panel-sub">
-        {deaths.length} deaths across {matches.length} games. Blue base bottom-left.
+        {hidden.size ? `${deaths.length} of ${all.length}` : all.length} deaths across{' '}
+        {matches.length} games. Blue base bottom-left. Click a phase to toggle it.
       </div>
       <svg viewBox="0 0 100 100" role="img" aria-label="Map of death locations on Summoner's Rift">
         <rect x="0.5" y="0.5" width="99" height="99" rx="3" fill="var(--page)" stroke="var(--border)" />
@@ -56,10 +69,14 @@ export function DeathMap({ matches }: { matches: MatchReport[] }) {
       </svg>
       <div className="legend">
         {PHASES.map(p => (
-          <span className="item" key={p.key}>
+          <button
+            className={`item legend-toggle${hidden.has(p.key) ? ' off' : ''}`}
+            key={p.key}
+            onClick={() => togglePhase(p.key)}
+          >
             <span className="swatch" style={{ background: p.color }} />
             {p.label}
-          </span>
+          </button>
         ))}
       </div>
       {tooltip.node}

@@ -181,6 +181,6 @@ export function buildClimbReport(
     player,
     matches,
     aggregate,
-    insights: buildInsights(aggregate),
+    insights: buildInsights(aggregate, matches),
   }
 }
