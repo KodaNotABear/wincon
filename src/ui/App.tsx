@@ -208,7 +208,7 @@ function Dashboard({
           <span className="tagline">find your win condition</span>
         </div>
         <span className="player-line">
-          {players.length > 1 ? (
+          {players.length > 1 && (
             <select className="mini-select" value={slug} onChange={e => onSelectPlayer(e.target.value)}>
               {players.map(p => (
                 <option key={p.slug} value={p.slug}>
@@ -216,12 +216,7 @@ function Dashboard({
                 </option>
               ))}
             </select>
-          ) : (
-            <strong>
-              {player.gameName}#{player.tagLine}
-            </strong>
-          )}{' '}
-          · {report.matches.length} ranked games · {window}{' '}
+          )}
           <button className="chip-btn" onClick={() => setLookupOpen(open => !open)}>
             {lookupOpen ? 'Cancel' : 'Add player'}
           </button>
@@ -255,6 +250,44 @@ function Dashboard({
         </form>
       )}
 
+      <section className="hero">
+        <svg className="hero-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path
+            d="M8.5 10.5 L12 22 L16 13.5 L20 22 L23.5 10.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <div className="hero-id">
+          <WinrateDonut wins={report.aggregate.wins} games={report.aggregate.games} />
+          <div className="hero-id-text">
+            <span className="hero-kicker">
+              {ROLE_LABELS[report.aggregate.primaryRole] ?? '?'} main · {report.matches.length} ranked games ·{' '}
+              {window}
+            </span>
+            <h2 className="hero-name">
+              {player.gameName}
+              <span className="hero-tag">#{player.tagLine}</span>
+            </h2>
+            {report.insights[0] && (
+              <p className="hero-verdict">
+                <span
+                  className="verdict-dot"
+                  style={{ background: SEVERITY[report.insights[0].severity].color }}
+                />
+                {report.insights[0].title}
+              </p>
+            )}
+          </div>
+        </div>
+        {report.matches[0] && (
+          <HeroReplay latest={report.matches[0]} onWatch={() => setReplayId(report.matches[0]!.matchId)} />
+        )}
+      </section>
+
       <div className="filter-bar">
         <button
           className={`chip-btn${roleFilter === null ? ' active' : ''}`}
@@ -283,11 +316,12 @@ function Dashboard({
             </option>
           ))}
         </select>
-        <span className="filter-count">
-          {filterActive ? `${filtered.length} of ${report.matches.length} games` : `${filtered.length} games`}
-          {' · '}
-          {agg.games ? `${(agg.winrate * 100).toFixed(0)}% winrate` : 'no games match'}
-        </span>
+        {filterActive && (
+          <span className="filter-count">
+            {filtered.length} of {report.matches.length} games ·{' '}
+            {agg.games ? `${(agg.winrate * 100).toFixed(0)}% winrate` : 'no games match'}
+          </span>
+        )}
         {filterActive && (
           <button
             className="chip-btn"
@@ -319,8 +353,6 @@ function Dashboard({
           label="vision per minute"
         />
       </div>
-
-      {report.matches[0] && <HeroReplay latest={report.matches[0]} onWatch={() => setReplayId(report.matches[0]!.matchId)} />}
 
       <LivePanel matches={report.matches} />
 
@@ -388,6 +420,34 @@ function Dashboard({
         Legends. League of Legends and Riot Games are trademarks or registered trademarks of Riot
         Games, Inc.
       </footer>
+    </div>
+  )
+}
+
+function WinrateDonut({ wins, games }: { wins: number; games: number }) {
+  const pct = games ? wins / games : 0
+  const R = 26
+  const C = 2 * Math.PI * R
+  return (
+    <div className="donut">
+      <svg viewBox="0 0 64 64" role="img" aria-label={`${Math.round(pct * 100)} percent winrate`}>
+        <circle cx="32" cy="32" r={R} fill="none" stroke="var(--grid)" strokeWidth="7" />
+        <circle
+          cx="32"
+          cy="32"
+          r={R}
+          fill="none"
+          stroke="var(--brand)"
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeDasharray={`${C * pct} ${C}`}
+          transform="rotate(-90 32 32)"
+        />
+      </svg>
+      <span className="donut-num">{Math.round(pct * 100)}%</span>
+      <span className="donut-sub">
+        {wins}W {games - wins}L
+      </span>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMoments } from '../src/analysis/moments'
+import { buildMoments, clusterMoments, type Moment } from '../src/analysis/moments'
 import { frame, makeMatch, makeParticipant, makeTimeline, pf } from './helpers'
 
 const participants = [
@@ -78,5 +78,34 @@ describe('buildMoments', () => {
 
   it('returns empty for an unknown player', () => {
     expect(buildMoments(match, timeline, 'nobody')).toEqual([])
+  })
+})
+
+describe('clusterMoments', () => {
+  const pause = (timestamp: number): Moment => ({
+    timestamp,
+    kind: 'death',
+    title: `t${timestamp}`,
+    note: '',
+    autoPause: true,
+  })
+
+  it('groups pause moments within the gap and splits beyond it', () => {
+    const moments = [
+      pause(60_000),
+      pause(65_000), // 5s later: same fight
+      pause(66_000),
+      pause(200_000), // far later: new cluster
+      { ...pause(205_000), autoPause: false }, // non-pausing moments are ignored
+      pause(206_000),
+    ]
+    const clusters = clusterMoments(moments)
+    expect(clusters.map(c => c.length)).toEqual([3, 2])
+    expect(clusters[0]![0]!.timestamp).toBe(60_000)
+    expect(clusters[1]![1]!.timestamp).toBe(206_000)
+  })
+
+  it('handles an empty list', () => {
+    expect(clusterMoments([])).toEqual([])
   })
 })

@@ -51,6 +51,25 @@ const mmss = (ms: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
+/**
+ * Group auto-pause moments that land within gapMs of each other (a death and
+ * the objective that fell seconds later are one story). The replay pauses
+ * once per cluster and resumes past the whole cluster, so Continue always
+ * visibly advances.
+ */
+export function clusterMoments(moments: Moment[], gapMs = 8_000): Moment[][] {
+  const clusters: Moment[][] = []
+  for (const moment of moments.filter(m => m.autoPause)) {
+    const current = clusters[clusters.length - 1]
+    if (current && moment.timestamp - current[current.length - 1]!.timestamp <= gapMs) {
+      current.push(moment)
+    } else {
+      clusters.push([moment])
+    }
+  }
+  return clusters
+}
+
 export function buildMoments(match: MatchDto, timeline: TimelineDto, puuid: string): Moment[] {
   const me = participantOf(match, puuid)
   if (!me) return []

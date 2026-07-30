@@ -72,7 +72,12 @@ export interface Position {
   y: number
 }
 
-export type TimelineEventDto = ChampionKillEvent | EliteMonsterKillEvent | BuildingKillEvent | OtherEvent
+export type TimelineEventDto =
+  | ChampionKillEvent
+  | EliteMonsterKillEvent
+  | BuildingKillEvent
+  | ItemPurchasedEvent
+  | OtherEvent
 
 export interface ChampionKillEvent {
   type: 'CHAMPION_KILL'
@@ -101,6 +106,14 @@ export interface BuildingKillEvent {
   teamId: 100 | 200
   buildingType: string
   position: Position
+}
+
+/** Purchases only happen at the shop, so these mark base visits precisely. */
+export interface ItemPurchasedEvent {
+  type: 'ITEM_PURCHASED'
+  timestamp: number
+  participantId: number
+  itemId: number
 }
 
 export interface OtherEvent {

@@ -1,19 +1,30 @@
 // Full-screen match replay driven by timeline frames: all ten champions
 // animate along their per-minute positions (as icon dots once Data Dragon
 // resolves), kills, objectives, and towers ping the map, your champion drags
-// a movement trail, and the replay auto-pauses at coaching moments. The
-// analysis lives in src/analysis/moments.ts; this component is playback.
+// a movement trail, and the replay auto-pauses at coaching moments.
+//
+// Movement model: positions are linearly interpolated between minute frames,
+// EXCEPT across a "break" (a death, or an item purchase marking a base
+// visit). Across a break the champion walks to the known death spot (when we
+// have one), then teleports, instead of gliding across the whole map. The
+// trail restarts at every break for the same reason.
+//
+// Pausing model: auto-pause moments are grouped into clusters (see
+// clusterMoments) so a death and the objective that fell five seconds later
+// are one card, and Continue always jumps past the entire story beat.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BuildingKillEvent,
   ChampionKillEvent,
   EliteMonsterKillEvent,
+  ItemPurchasedEvent,
   MatchDto,
+  Position,
   TimelineDto,
 } from '../riot/types'
 import { normalizeDuration } from '../riot/types'
-import { buildMoments, type Moment, type MomentKind } from '../analysis/moments'
+import { buildMoments, clusterMoments, type Moment, type MomentKind } from '../analysis/moments'
 import { ChampIcon, champIconUrl, useDdragonVersion } from './ddragon'
 import { RiftBackdrop, sx, sy } from './RiftMap'
 
@@ -39,6 +50,11 @@ const KIND_STYLE: Record<MomentKind, { label: string; bg: string; text: string }
 const mmss = (ms: number) => {
   const total = Math.floor(ms / 1000)
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+interface Break {
+  ts: number
+  pos?: Position
 }
 
 export function Replay({
@@ -91,7 +107,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     : undefined
 
   const moments = useMemo(() => buildMoments(match, timeline, puuid), [match, timeline, puuid])
-  const pauseMoments = useMemo(() => moments.filter(m => m.autoPause), [moments])
+  const clusters = useMemo(() => clusterMoments(moments), [moments])
 
   const kills = useMemo(
     () =>
@@ -122,6 +138,36 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     [timeline],
   )
 
+  // Interpolation breaks per participant: deaths (with the exact death spot)
+  // and base visits (first item purchase of a shopping trip).
+  const breaks = useMemo(() => {
+    const map = new Map<number, Break[]>()
+    const push = (pid: number, b: Break) => {
+      const list = map.get(pid) ?? []
+      list.push(b)
+      map.set(pid, list)
+    }
+    for (const frame of timeline.info.frames) {
+      for (const event of frame.events) {
+        if (event.type === 'CHAMPION_KILL') {
+          const kill = event as ChampionKillEvent
+          push(kill.victimId, { ts: kill.timestamp, pos: kill.position })
+        } else if (event.type === 'ITEM_PURCHASED') {
+          const buy = event as ItemPurchasedEvent
+          const list = map.get(buy.participantId)
+          const last = list?.[list.length - 1]
+          // Collapse a shopping spree into one base visit.
+          if (!last || buy.timestamp - last.ts > 3_000) push(buy.participantId, { ts: buy.timestamp })
+        }
+      }
+    }
+    for (const list of map.values()) list.sort((a, b) => a.ts - b.ts)
+    return map
+  }, [timeline])
+
+  const firstBreak = (pid: number, from: number, to: number): Break | null =>
+    breaks.get(pid)?.find(b => b.ts > from && b.ts <= to) ?? null
+
   // Blue team gold lead per frame, for the strip under the map.
   const goldDiff = useMemo(
     () =>
@@ -141,7 +187,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   const [playing, setPlaying] = useState(true)
   const [speed, setSpeed] = useState(1)
   const [autoPause, setAutoPause] = useState(true)
-  const [activeMoment, setActiveMoment] = useState<Moment | null>(null)
+  const [activeCluster, setActiveCluster] = useState<Moment[] | null>(null)
   const clockRef = useRef(0)
 
   useEffect(() => {
@@ -151,21 +197,21 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     const tick = (now: number) => {
       const dt = now - last
       last = now
-      let next = clockRef.current + dt * BASE_RATE * speed
+      const next = clockRef.current + dt * BASE_RATE * speed
       const crossed = autoPause
-        ? moments.find(m => m.autoPause && m.timestamp > clockRef.current && m.timestamp <= next)
+        ? clusters.find(c => c[0]!.timestamp > clockRef.current && c[0]!.timestamp <= next)
         : undefined
       if (crossed) {
-        clockRef.current = crossed.timestamp
-        setClock(crossed.timestamp)
-        setActiveMoment(crossed)
+        clockRef.current = crossed[0]!.timestamp
+        setClock(crossed[0]!.timestamp)
+        setActiveCluster(crossed)
         setPlaying(false)
         return
       }
       if (next >= duration) {
         clockRef.current = duration
         setClock(duration)
-        setActiveMoment(moments[moments.length - 1] ?? null)
+        setActiveCluster(clusters[clusters.length - 1] ?? null)
         setPlaying(false)
         return
       }
@@ -175,13 +221,13 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [playing, speed, autoPause, moments, duration])
+  }, [playing, speed, autoPause, clusters, duration])
 
-  const seek = (t: number, moment: Moment | null = null) => {
+  const seek = (t: number, cluster: Moment[] | null = null) => {
     clockRef.current = t
     setClock(t)
-    setActiveMoment(moment)
-    if (moment) setPlaying(false)
+    setActiveCluster(cluster)
+    if (cluster) setPlaying(false)
   }
 
   const restart = () => {
@@ -189,13 +235,13 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     setPlaying(true)
   }
 
-  // Resume from a moment card. The tiny clock nudge steps past the paused
-  // moment so the crossing check can't re-match it, and playback visibly
-  // advances even when the next moment is seconds away.
+  // Continue from a card: step past the WHOLE cluster so the crossing check
+  // can't re-match any of it, then play.
   const resume = () => {
-    clockRef.current = Math.min(duration, clockRef.current + 250)
+    const clusterEnd = activeCluster?.[activeCluster.length - 1]?.timestamp ?? clockRef.current
+    clockRef.current = Math.min(duration, Math.max(clockRef.current, clusterEnd) + 250)
     setClock(clockRef.current)
-    setActiveMoment(null)
+    setActiveCluster(null)
     setPlaying(true)
   }
 
@@ -207,7 +253,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       if (clockRef.current >= duration) {
         restart()
       } else {
-        setActiveMoment(null)
+        setActiveCluster(null)
         setPlaying(p => !p)
       }
     }
@@ -216,42 +262,67 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duration])
 
-  // Interpolated positions for everyone on the map at `clock`.
+  // Positions at `clock`: lerp between frames unless a break interrupts.
   const interval = timeline.info.frameInterval || 60_000
   const frames = timeline.info.frames
   const idx = Math.min(Math.floor(clock / interval), frames.length - 1)
   const nextIdx = Math.min(idx + 1, frames.length - 1)
-  const alpha = nextIdx === idx ? 0 : Math.min(1, Math.max(0, (clock - idx * interval) / interval))
+  const tsA = idx * interval
+  const tsB = nextIdx * interval
+
+  const positionFor = (pid: number, a: Position, b: Position): Position => {
+    const alpha = tsB === tsA ? 0 : Math.min(1, Math.max(0, (clock - tsA) / (tsB - tsA)))
+    const brk = firstBreak(pid, tsA, tsB)
+    if (!brk) {
+      return { x: a.x + (b.x - a.x) * alpha, y: a.y + (b.y - a.y) * alpha }
+    }
+    if (clock < brk.ts) {
+      if (!brk.pos) return a // heading to base: hold until the teleport
+      const beta = brk.ts === tsA ? 1 : Math.min(1, (clock - tsA) / (brk.ts - tsA))
+      return { x: a.x + (brk.pos.x - a.x) * beta, y: a.y + (brk.pos.y - a.y) * beta }
+    }
+    return b
+  }
+
   const dots = match.info.participants.flatMap(p => {
     const a = frames[idx]?.participantFrames[String(p.participantId)]
     const b = frames[nextIdx]?.participantFrames[String(p.participantId)]
     if (!a || !b) return []
-    return [
-      {
-        participant: p,
-        x: a.position.x + (b.position.x - a.position.x) * alpha,
-        y: a.position.y + (b.position.y - a.position.y) * alpha,
-        isMe: p.puuid === puuid,
-      },
-    ]
+    const pos = positionFor(p.participantId, a.position, b.position)
+    return [{ participant: p, x: pos.x, y: pos.y, isMe: p.puuid === puuid }]
   })
 
-  // Movement history for your champion: the last few minutes of positions.
+  // Movement history for your champion, split into segments at every break
+  // (death or base visit) so the trail never draws impossible walks.
   const meDot = dots.find(d => d.isMe)
-  const trail: string[] = []
+  const trailSegments: string[][] = [[]]
   if (me && meDot) {
-    for (let i = Math.max(0, idx - TRAIL_FRAMES); i <= idx; i++) {
-      const pf = frames[i]?.participantFrames[String(me.participantId)]
-      if (pf) trail.push(`${sx(pf.position.x)},${sy(pf.position.y)}`)
+    const pid = me.participantId
+    const point = (p: Position) => `${sx(p.x)},${sy(p.y)}`
+    for (let i = Math.max(0, idx - TRAIL_FRAMES); i < idx; i++) {
+      const pf = frames[i]?.participantFrames[String(pid)]
+      if (pf) trailSegments[trailSegments.length - 1]!.push(point(pf.position))
+      const brk = firstBreak(pid, i * interval, (i + 1) * interval)
+      if (brk) {
+        if (brk.pos) trailSegments[trailSegments.length - 1]!.push(point(brk.pos))
+        trailSegments.push([])
+      }
     }
-    trail.push(`${sx(meDot.x)},${sy(meDot.y)}`)
+    const pfNow = frames[idx]?.participantFrames[String(pid)]
+    if (pfNow) trailSegments[trailSegments.length - 1]!.push(point(pfNow.position))
+    const brkNow = firstBreak(pid, tsA, Math.min(clock, tsB))
+    if (brkNow) {
+      if (brkNow.pos) trailSegments[trailSegments.length - 1]!.push(point(brkNow.pos))
+      trailSegments.push([])
+    }
+    trailSegments[trailSegments.length - 1]!.push(point({ x: meDot.x, y: meDot.y }))
   }
 
   const activePings = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < PING_LIFE_MS)
   const activeMonsters = monsters.filter(m => clock >= m.timestamp && clock - m.timestamp < PING_LIFE_MS * 1.5)
   const activeTowers = towers.filter(t => clock >= t.timestamp && clock - t.timestamp < PING_LIFE_MS * 1.5)
   const maxGold = Math.max(1000, ...goldDiff.map(Math.abs))
-  const momentIndex = activeMoment ? pauseMoments.indexOf(activeMoment) : -1
+  const clusterIndex = activeCluster ? clusters.indexOf(activeCluster) : -1
 
   return (
     <>
@@ -278,18 +349,21 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
           <div className="replay-map">
             <svg viewBox="0 0 100 100" role="img" aria-label="Match replay map">
               <RiftBackdrop />
-              {trail.length > 1 && (
-                <polyline
-                  points={trail.join(' ')}
-                  fill="none"
-                  stroke="var(--brand)"
-                  strokeWidth="0.7"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeDasharray="1.7 1.1"
-                  opacity="0.5"
-                />
-              )}
+              {trailSegments
+                .filter(segment => segment.length > 1)
+                .map((segment, i) => (
+                  <polyline
+                    key={`trail-${i}`}
+                    points={segment.join(' ')}
+                    fill="none"
+                    stroke="var(--brand)"
+                    strokeWidth="0.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray="1.7 1.1"
+                    opacity="0.5"
+                  />
+                ))}
               {activeTowers.map((t, i) => {
                 const age = (clock - t.timestamp) / (PING_LIFE_MS * 1.5)
                 return (
@@ -387,23 +461,27 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
               })}
             </svg>
 
-            {activeMoment && (
-              <div className="moment-card" key={activeMoment.title}>
-                <div className="moment-head">
-                  <span
-                    className="sev-chip"
-                    style={{ background: KIND_STYLE[activeMoment.kind].bg, color: KIND_STYLE[activeMoment.kind].text }}
-                  >
-                    {KIND_STYLE[activeMoment.kind].label}
-                  </span>
-                  <strong>{activeMoment.title}</strong>
-                  {momentIndex >= 0 && (
-                    <span className="moment-count">
-                      {momentIndex + 1} of {pauseMoments.length}
-                    </span>
-                  )}
-                </div>
-                {activeMoment.note && <p>{activeMoment.note}</p>}
+            {activeCluster && (
+              <div className="moment-card" key={activeCluster[0]!.title}>
+                {activeCluster.map((moment, i) => (
+                  <div key={i} className="moment-entry">
+                    <div className="moment-head">
+                      <span
+                        className="sev-chip"
+                        style={{ background: KIND_STYLE[moment.kind].bg, color: KIND_STYLE[moment.kind].text }}
+                      >
+                        {KIND_STYLE[moment.kind].label}
+                      </span>
+                      <strong>{moment.title}</strong>
+                      {i === 0 && clusterIndex >= 0 && (
+                        <span className="moment-count">
+                          {clusterIndex + 1} of {clusters.length}
+                        </span>
+                      )}
+                    </div>
+                    {moment.note && <p>{moment.note}</p>}
+                  </div>
+                ))}
                 <div className="moment-actions">
                   {clock < duration ? (
                     <button className="play-btn" onClick={resume}>
@@ -483,8 +561,8 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             .map((m, i) => (
               <button
                 key={i}
-                className={`moment-item${m.timestamp <= clock ? ' past' : ''}${activeMoment === m ? ' current' : ''}`}
-                onClick={() => seek(m.timestamp, m.autoPause ? m : null)}
+                className={`moment-item${m.timestamp <= clock ? ' past' : ''}${activeCluster?.includes(m) ? ' current' : ''}`}
+                onClick={() => seek(m.timestamp, m.autoPause ? clusters.find(c => c.includes(m)) ?? null : null)}
               >
                 <span className="moment-dot" style={{ background: KIND_STYLE[m.kind].bg }} />
                 {m.title}
