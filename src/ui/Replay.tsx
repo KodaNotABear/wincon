@@ -1,17 +1,15 @@
-// Full-screen match replay driven by timeline frames: all ten champions
-// animate along their per-minute positions (as icon dots once Data Dragon
-// resolves), kills, objectives, and towers ping the map, your champion drags
-// a movement trail, and the replay auto-pauses at coaching moments.
+// Full-screen match replay driven by timeline frames.
 //
-// Movement model: positions are linearly interpolated between minute frames,
-// EXCEPT across a "break" (a death, or an item purchase marking a base
-// visit). Across a break the champion walks to the known death spot (when we
-// have one), then teleports, instead of gliding across the whole map. The
-// trail restarts at every break for the same reason.
+// Movement: per-player anchor lists built from every positional signal in
+// the API (minute frames, deaths, kill/objective/tower participation, shop
+// visits). Deaths and base visits teleport instead of interpolating.
 //
-// Pausing model: auto-pause moments are grouped into clusters (see
-// clusterMoments) so a death and the objective that fell five seconds later
-// are one card, and Continue always jumps past the entire story beat.
+// Presentation: the map gets a director's-cut treatment. While playing you
+// see champions, wards, pings, a killfeed, and a broadcast clock; when a
+// coaching cluster pauses playback, the camera zooms to the event, a
+// spotlight dims everything else, and the coach card docks in the sidebar
+// so the map is never covered. The gold timeline doubles as the scrubber,
+// with your deaths, kills, and objectives plotted on the curve itself.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -22,6 +20,7 @@ import type {
   MatchDto,
   Position,
   TimelineDto,
+  WardPlacedEvent,
 } from '../riot/types'
 import { normalizeDuration } from '../riot/types'
 import { buildMoments, clusterMoments, type Moment, type MomentKind } from '../analysis/moments'
@@ -40,6 +39,15 @@ const SPEEDS = [0.5, 1, 2, 4]
 const PING_LIFE_MS = 30_000 // in-game lifetime of a kill ping
 const TRAIL_FRAMES = 6 // minutes of movement history behind your champion
 
+// Display lifetimes per ward type. Honest approximations: trinket wards are
+// level-scaled and farsight is permanent, but 95s reads right on a replay.
+const WARD_LIFE: Record<string, number> = {
+  CONTROL_WARD: 180_000,
+  YELLOW_TRINKET: 95_000,
+  SIGHT_WARD: 95_000,
+  BLUE_TRINKET: 95_000,
+}
+
 const KIND_STYLE: Record<MomentKind, { label: string; bg: string; text: string }> = {
   death: { label: 'DEATH', bg: 'var(--status-critical)', text: '#ffffff' },
   kill: { label: 'KILL', bg: 'var(--status-good)', text: '#ffffff' },
@@ -52,6 +60,8 @@ const mmss = (ms: number) => {
   const total = Math.floor(ms / 1000)
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
 interface Anchor {
   ts: number
@@ -107,6 +117,10 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   const opp = me
     ? match.info.participants.find(p => p.teamId !== me.teamId && p.teamPosition === me.teamPosition)
     : undefined
+  const champByPid = useMemo(
+    () => new Map(match.info.participants.map(p => [p.participantId, p.championName])),
+    [match],
+  )
 
   const moments = useMemo(() => buildMoments(match, timeline, puuid), [match, timeline, puuid])
   const clusters = useMemo(() => clusterMoments(moments), [moments])
@@ -116,7 +130,13 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       timeline.info.frames.flatMap(f =>
         f.events
           .filter((e): e is ChampionKillEvent => e.type === 'CHAMPION_KILL')
-          .map(e => ({ timestamp: e.timestamp, position: e.position, victimTeam: e.victimId <= 5 ? 100 : 200 })),
+          .map(e => ({
+            timestamp: e.timestamp,
+            position: e.position,
+            killerId: e.killerId,
+            victimId: e.victimId,
+            victimTeam: (e.victimId <= 5 ? 100 : 200) as 100 | 200,
+          })),
       ),
     [timeline],
   )
@@ -141,9 +161,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   )
 
   // Position anchors per participant, using every positional signal the API
-  // has: minute frames, deaths (exact spot), kill participation (killer and
-  // assisters were at the victim's position), and base visits (purchases
-  // only happen at the shop). Deaths and base visits are teleports.
+  // has. Deaths and base visits are teleports.
   const anchorsByPid = useMemo(() => {
     const map = new Map<number, Anchor[]>()
     const add = (pid: number, anchor: Anchor) => {
@@ -169,7 +187,6 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
           const buy = event as ItemPurchasedEvent
           add(buy.participantId, { ts: buy.timestamp, kind: 'base' })
         } else if (event.type === 'ELITE_MONSTER_KILL') {
-          // Whoever killed or assisted on an epic monster was at the pit.
           const monster = event as EliteMonsterKillEvent
           if (monster.killerId >= 1 && monster.killerId <= 10) {
             add(monster.killerId, { ts: monster.timestamp, pos: monster.position, kind: 'pin' })
@@ -178,7 +195,6 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             add(assistId, { ts: monster.timestamp, pos: monster.position, kind: 'pin' })
           }
         } else if (event.type === 'BUILDING_KILL') {
-          // Whoever killed or assisted on a building was at that turret.
           const building = event as BuildingKillEvent
           if (building.killerId && building.killerId >= 1 && building.killerId <= 10) {
             add(building.killerId, { ts: building.timestamp, pos: building.position, kind: 'pin' })
@@ -191,7 +207,6 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     }
     for (const [pid, list] of map) {
       list.sort((a, b) => a.ts - b.ts)
-      // Collapse shopping sprees into one base visit.
       const cleaned: Anchor[] = []
       for (const anchor of list) {
         const prev = cleaned[cleaned.length - 1]
@@ -219,57 +234,102 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     if (i < 0) return list[0]!.pos ?? nextPosAfter(list, 0)
     const a = list[i]!
     const b = list[i + 1]
-    // A death or base visit teleports: from that instant, show the champion
-    // wherever the data next places them (fountain, then walking out).
     if (a.kind === 'death' || a.kind === 'base') {
       return nextPosAfter(list, i + 1) ?? a.pos ?? null
     }
     if (!b) return a.pos ?? null
-    if (b.kind === 'base' || !b.pos) return a.pos ?? null // hold until the teleport
+    if (b.kind === 'base' || !b.pos) return a.pos ?? null
     if (!a.pos) return b.pos
     const alpha = b.ts === a.ts ? 0 : (t - a.ts) / (b.ts - a.ts)
     return { x: a.pos.x + (b.pos.x - a.pos.x) * alpha, y: a.pos.y + (b.pos.y - a.pos.y) * alpha }
   }
 
-  // Respawn timers aren't in the API; dim the dot briefly after each death.
   const isRespawning = (pid: number, t: number): boolean =>
     anchorsByPid.get(pid)?.some(a => a.kind === 'death' && a.ts <= t && t - a.ts < 11_000) ?? false
 
-  // Blue team gold lead per frame, for the strip under the map.
-  const goldDiff = useMemo(
+  // Wards, planted at the placer's position at placement time.
+  const wards = useMemo(
     () =>
-      timeline.info.frames.map(f => {
-        let blue = 0
-        let red = 0
-        for (const pf of Object.values(f.participantFrames)) {
-          if (pf.participantId <= 5) blue += pf.totalGold
-          else red += pf.totalGold
-        }
-        return blue - red
-      }),
-    [timeline],
+      timeline.info.frames.flatMap(f =>
+        f.events
+          .filter((e): e is WardPlacedEvent => e.type === 'WARD_PLACED')
+          .filter(e => e.creatorId >= 1 && e.creatorId <= 10 && e.wardType !== 'UNDEFINED')
+          .flatMap(e => {
+            const pos = posAt(e.creatorId, e.timestamp)
+            if (!pos) return []
+            return [
+              {
+                ts: e.timestamp,
+                pos,
+                creatorId: e.creatorId,
+                team: (e.creatorId <= 5 ? 100 : 200) as 100 | 200,
+                control: e.wardType === 'CONTROL_WARD',
+                life: WARD_LIFE[e.wardType] ?? 95_000,
+              },
+            ]
+          }),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [timeline, anchorsByPid],
   )
 
-  const tooltip = useTooltip()
+  // Gold lead per frame, from YOUR team's perspective, indexed by timestamp.
+  const goldPts = useMemo(() => {
+    const sign = me?.teamId === 200 ? -1 : 1
+    return timeline.info.frames.map(f => {
+      let blue = 0
+      let red = 0
+      for (const pf of Object.values(f.participantFrames)) {
+        if (pf.participantId <= 5) blue += pf.totalGold
+        else red += pf.totalGold
+      }
+      return { t: f.timestamp, lead: sign * (blue - red) }
+    })
+  }, [timeline, me?.teamId])
+
+  const leadAt = (t: number): number => {
+    if (goldPts.length === 0) return 0
+    let prev = goldPts[0]!
+    for (const pt of goldPts) {
+      if (pt.t > t) {
+        const alpha = pt.t === prev.t ? 0 : (t - prev.t) / (pt.t - prev.t)
+        return prev.lead + (pt.lead - prev.lead) * alpha
+      }
+      prev = pt
+    }
+    return prev.lead
+  }
+
+  const mapTip = useTooltip()
+  const timelineTip = useTooltip()
   const [clock, setClock] = useState(0)
   const [playing, setPlaying] = useState(true)
   const [speed, setSpeed] = useState(1)
   const [autoPause, setAutoPause] = useState(true)
+  const [showWards, setShowWards] = useState(true)
   const [activeCluster, setActiveCluster] = useState<Moment[] | null>(null)
   const clockRef = useRef(0)
+  const scrubbing = useRef(false)
 
   useEffect(() => {
     if (!playing) return
     let raf = 0
     let last = performance.now()
-    const tick = (now: number) => {
-      const dt = now - last
+    let lastStep = last
+    let stopped = false
+    // Advance the clock by wall time, clamped so an occlusion gap never
+    // teleports the playhead.
+    const step = (now: number) => {
+      if (stopped) return
+      const dt = Math.min(250, now - last)
       last = now
+      lastStep = now
       const next = clockRef.current + dt * BASE_RATE * speed
       const crossed = autoPause
         ? clusters.find(c => c[0]!.timestamp > clockRef.current && c[0]!.timestamp <= next)
         : undefined
       if (crossed) {
+        stopped = true
         clockRef.current = crossed[0]!.timestamp
         setClock(crossed[0]!.timestamp)
         setActiveCluster(crossed)
@@ -277,6 +337,7 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
         return
       }
       if (next >= duration) {
+        stopped = true
         clockRef.current = duration
         setClock(duration)
         setActiveCluster(clusters[clusters.length - 1] ?? null)
@@ -285,15 +346,28 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       }
       clockRef.current = next
       setClock(next)
-      raf = requestAnimationFrame(tick)
+    }
+    const tick = (now: number) => {
+      step(now)
+      if (!stopped) raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    // Browsers freeze rAF entirely when the window is hidden or occluded,
+    // which made Continue look dead. This slow timer keeps time flowing
+    // whenever rAF stalls; rendering catches up on the next real frame.
+    const fallback = setInterval(() => {
+      const now = performance.now()
+      if (now - lastStep > 300) step(now)
+    }, 250)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearInterval(fallback)
+    }
   }, [playing, speed, autoPause, clusters, duration])
 
   const seek = (t: number, cluster: Moment[] | null = null) => {
-    clockRef.current = t
-    setClock(t)
+    clockRef.current = clamp(t, 0, duration)
+    setClock(clockRef.current)
     setActiveCluster(cluster)
     if (cluster) setPlaying(false)
   }
@@ -303,8 +377,6 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     setPlaying(true)
   }
 
-  // Continue from a card: step past the WHOLE cluster so the crossing check
-  // can't re-match any of it, then play.
   const resume = () => {
     const clusterEnd = activeCluster?.[activeCluster.length - 1]?.timestamp ?? clockRef.current
     clockRef.current = Math.min(duration, Math.max(clockRef.current, clusterEnd) + 250)
@@ -313,7 +385,6 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     setPlaying(true)
   }
 
-  // Space toggles play/pause (Escape close is handled by the wrapper).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return
@@ -344,8 +415,6 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     ]
   })
 
-  // Movement history for your champion from the anchor list, split into
-  // segments at every teleport so the trail never draws impossible walks.
   const meDot = dots.find(d => d.isMe)
   const trailSegments: string[][] = [[]]
   if (me && meDot) {
@@ -360,9 +429,8 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     trailSegments[trailSegments.length - 1]!.push(point({ x: meDot.x, y: meDot.y }))
   }
 
-  // While paused, annotate the map with computed context: where the enemy
-  // jungler was when you died, and where YOU were when objectives fell.
-  // Hovering a marker explains what it means.
+  // Paused-moment annotations: where the enemy jungler was when you died,
+  // and where you were when objectives fell.
   interface MapNote {
     x: number
     y: number
@@ -407,11 +475,54 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     }
   }
 
+  // Director's cut: zoom the camera to the paused event and spotlight it.
+  const focusPos = activeCluster
+    ? activeCluster.find(m => m.position)?.position ??
+      (me ? posAt(me.participantId, activeCluster[0]!.timestamp) : null)
+    : null
+  const cam = (() => {
+    if (!focusPos) return { s: 1, tx: 0, ty: 0 }
+    const s = 1.8
+    const cx = clamp(sx(focusPos.x), 50 / s, 100 - 50 / s)
+    const cy = clamp(sy(focusPos.y), 50 / s, 100 - 50 / s)
+    return { s, tx: 50 - s * cx, ty: 50 - s * cy }
+  })()
+  const spot = focusPos
+    ? { x: cam.tx + cam.s * sx(focusPos.x), y: cam.ty + cam.s * sy(focusPos.y) }
+    : null
+
   const activePings = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < PING_LIFE_MS)
   const activeMonsters = monsters.filter(m => clock >= m.timestamp && clock - m.timestamp < PING_LIFE_MS * 1.5)
   const activeTowers = towers.filter(t => clock >= t.timestamp && clock - t.timestamp < PING_LIFE_MS * 1.5)
-  const maxGold = Math.max(1000, ...goldDiff.map(Math.abs))
+  const activeWards = showWards
+    ? wards.filter(w => clock >= w.ts && clock - w.ts < w.life)
+    : []
+  // Killfeed entries linger ~2.6 real seconds regardless of playback speed.
+  const feedWindow = BASE_RATE * speed * 2_600
+  const killfeed = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < feedWindow).slice(-4)
+
   const clusterIndex = activeCluster ? clusters.indexOf(activeCluster) : -1
+
+  // Timeline geometry.
+  const TL_W = 560
+  const TL_H = 92
+  const plotTop = 8
+  const plotBot = TL_H - 20
+  const y0 = (plotTop + plotBot) / 2
+  const maxLead = Math.max(1000, ...goldPts.map(p => Math.abs(p.lead)))
+  const goldScale = (plotBot - plotTop) / 2 / maxLead
+  const tx = (t: number) => (t / duration) * TL_W
+  const ty = (lead: number) => y0 - lead * goldScale
+  const leadLine = goldPts.map(p => `${tx(p.t)},${ty(p.lead)}`).join(' ')
+  const leadArea = `M 0 ${y0} L ${leadLine.replace(/ /g, ' L ')} L ${TL_W} ${y0} Z`
+
+  const seekFromPointer = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    seek(((e.clientX - rect.left) / rect.width) * duration)
+  }
+
+  const myDeathMarks = me ? kills.filter(k => k.victimId === me.participantId) : []
+  const myKillMarks = me ? kills.filter(k => k.killerId === me.participantId) : []
 
   return (
     <>
@@ -437,208 +548,318 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
         <div className="replay-stage">
           <div className="replay-map">
             <svg viewBox="0 0 100 100" role="img" aria-label="Match replay map">
-              <RiftBackdrop />
-              {trailSegments
-                .filter(segment => segment.length > 1)
-                .map((segment, i) => (
-                  <polyline
-                    key={`trail-${i}`}
-                    points={segment.join(' ')}
-                    fill="none"
-                    stroke="var(--brand)"
-                    strokeWidth="0.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeDasharray="1.7 1.1"
-                    opacity="0.5"
-                  />
-                ))}
-              {activeTowers.map((t, i) => {
-                const age = (clock - t.timestamp) / (PING_LIFE_MS * 1.5)
-                return (
-                  <rect
-                    key={`tower-${i}`}
-                    x={sx(t.position.x) - 1.3}
-                    y={sy(t.position.y) - 1.3}
-                    width="2.6"
-                    height="2.6"
-                    fill="none"
-                    stroke={t.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
-                    strokeWidth="0.6"
-                    opacity={0.8 * (1 - age)}
-                  />
-                )
-              })}
-              {activeMonsters.map((m, i) => {
-                const age = (clock - m.timestamp) / (PING_LIFE_MS * 1.5)
-                return (
-                  <rect
-                    key={`mon-${i}`}
-                    x={sx(m.position.x) - 1.8}
-                    y={sy(m.position.y) - 1.8}
-                    width="3.6"
-                    height="3.6"
-                    transform={`rotate(45 ${sx(m.position.x)} ${sy(m.position.y)})`}
-                    fill="none"
-                    stroke={m.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
-                    strokeWidth="0.7"
-                    opacity={1 - age}
-                  />
-                )
-              })}
-              {activePings.map((k, i) => {
-                const age = (clock - k.timestamp) / PING_LIFE_MS
-                const c = k.victimTeam === 100 ? 'var(--series-1)' : 'var(--series-2)'
-                return (
-                  <g key={`kill-${i}`} opacity={0.9 * (1 - age)}>
-                    <path
-                      d={`M ${sx(k.position.x) - 1.2} ${sy(k.position.y) - 1.2} l 2.4 2.4 M ${sx(k.position.x) + 1.2} ${sy(k.position.y) - 1.2} l -2.4 2.4`}
-                      stroke={c}
+              <g
+                className="map-camera"
+                style={{ transform: `translate(${cam.tx}px, ${cam.ty}px) scale(${cam.s})` }}
+              >
+                <RiftBackdrop />
+                {trailSegments
+                  .filter(segment => segment.length > 1)
+                  .map((segment, i) => (
+                    <polyline
+                      key={`trail-${i}`}
+                      points={segment.join(' ')}
+                      fill="none"
+                      stroke="var(--brand)"
                       strokeWidth="0.7"
                       strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeDasharray="1.7 1.1"
+                      opacity="0.5"
                     />
-                    {age < 0.25 && (
-                      <circle
-                        cx={sx(k.position.x)}
-                        cy={sy(k.position.y)}
-                        r={2 + age * 10}
-                        fill="none"
+                  ))}
+                {activeWards.map((w, i) => {
+                  const fade = Math.min(1, (w.ts + w.life - clock) / 10_000)
+                  const mine = w.creatorId === me?.participantId
+                  const c = w.team === 100 ? 'var(--series-1)' : 'var(--series-2)'
+                  const wx = sx(w.pos.x)
+                  const wy = sy(w.pos.y)
+                  return (
+                    <g key={`ward-${i}`} opacity={(mine ? 0.95 : 0.5) * fade}>
+                      {w.control ? (
+                        <rect
+                          x={wx - 0.9}
+                          y={wy - 0.9}
+                          width="1.8"
+                          height="1.8"
+                          transform={`rotate(45 ${wx} ${wy})`}
+                          fill="none"
+                          stroke={c}
+                          strokeWidth="0.45"
+                        />
+                      ) : (
+                        <circle cx={wx} cy={wy} r="1" fill="none" stroke={c} strokeWidth="0.45" />
+                      )}
+                      <circle cx={wx} cy={wy} r="0.4" fill={c} />
+                    </g>
+                  )
+                })}
+                {activeTowers.map((t, i) => {
+                  const age = (clock - t.timestamp) / (PING_LIFE_MS * 1.5)
+                  return (
+                    <rect
+                      key={`tower-${i}`}
+                      x={sx(t.position.x) - 1.3}
+                      y={sy(t.position.y) - 1.3}
+                      width="2.6"
+                      height="2.6"
+                      fill="none"
+                      stroke={t.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
+                      strokeWidth="0.6"
+                      opacity={0.8 * (1 - age)}
+                    />
+                  )
+                })}
+                {activeMonsters.map((m, i) => {
+                  const age = (clock - m.timestamp) / (PING_LIFE_MS * 1.5)
+                  return (
+                    <rect
+                      key={`mon-${i}`}
+                      x={sx(m.position.x) - 1.8}
+                      y={sy(m.position.y) - 1.8}
+                      width="3.6"
+                      height="3.6"
+                      transform={`rotate(45 ${sx(m.position.x)} ${sy(m.position.y)})`}
+                      fill="none"
+                      stroke={m.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
+                      strokeWidth="0.7"
+                      opacity={1 - age}
+                    />
+                  )
+                })}
+                {activePings.map((k, i) => {
+                  const age = (clock - k.timestamp) / PING_LIFE_MS
+                  const c = k.victimTeam === 100 ? 'var(--series-1)' : 'var(--series-2)'
+                  return (
+                    <g key={`kill-${i}`} opacity={0.9 * (1 - age)}>
+                      <path
+                        d={`M ${sx(k.position.x) - 1.2} ${sy(k.position.y) - 1.2} l 2.4 2.4 M ${sx(k.position.x) + 1.2} ${sy(k.position.y) - 1.2} l -2.4 2.4`}
                         stroke={c}
+                        strokeWidth="0.7"
+                        strokeLinecap="round"
+                      />
+                      {age < 0.25 && (
+                        <circle
+                          cx={sx(k.position.x)}
+                          cy={sy(k.position.y)}
+                          r={2 + age * 10}
+                          fill="none"
+                          stroke={c}
+                          strokeWidth="0.4"
+                          opacity={1 - age * 4}
+                        />
+                      )}
+                    </g>
+                  )
+                })}
+                {dots.map(d => {
+                  const pid = d.participant.participantId
+                  const r = d.isMe ? 3 : 2.4
+                  const cx = sx(d.x)
+                  const cy = sy(d.y)
+                  const team = d.participant.teamId === 100 ? 'var(--series-1)' : 'var(--series-2)'
+                  return (
+                    <g key={pid} opacity={d.respawning ? 0.35 : 1}>
+                      <title>{d.participant.championName}</title>
+                      <circle cx={cx} cy={cy} r={r} fill={team} />
+                      {version && (
+                        <>
+                          <clipPath id={`champ-clip-${pid}`}>
+                            <circle cx={cx} cy={cy} r={r - 0.3} />
+                          </clipPath>
+                          <image
+                            href={champIconUrl(version, d.participant.championName)}
+                            x={cx - r}
+                            y={cy - r}
+                            width={r * 2}
+                            height={r * 2}
+                            clipPath={`url(#champ-clip-${pid})`}
+                            preserveAspectRatio="xMidYMid slice"
+                          />
+                        </>
+                      )}
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={r}
+                        fill="none"
+                        stroke={d.isMe ? 'var(--brand)' : team}
+                        strokeWidth={d.isMe ? 0.9 : 0.55}
+                      />
+                    </g>
+                  )
+                })}
+                {mapNotes.map((note, i) => (
+                  <g
+                    key={`note-${i}`}
+                    className="map-note"
+                    onMouseMove={e => mapTip.show(e, note.title, [note.tip])}
+                    onMouseLeave={mapTip.hide}
+                  >
+                    {note.from && (
+                      <line
+                        x1={sx(note.from.x)}
+                        y1={sy(note.from.y)}
+                        x2={sx(note.x)}
+                        y2={sy(note.y)}
+                        stroke="var(--status-warn)"
                         strokeWidth="0.4"
-                        opacity={1 - age * 4}
+                        strokeDasharray="1.2 1"
+                        opacity="0.8"
                       />
                     )}
+                    <circle className="note-pulse" cx={sx(note.x)} cy={sy(note.y)} r="3.4" fill="none" stroke="var(--status-warn)" strokeWidth="0.5" />
+                    <circle cx={sx(note.x)} cy={sy(note.y)} r="1.7" fill="var(--status-warn)" />
+                    <text className="note-glyph" x={sx(note.x)} y={sy(note.y) + 0.85} textAnchor="middle">
+                      !
+                    </text>
                   </g>
-                )
-              })}
-              {dots.map(d => {
-                const pid = d.participant.participantId
-                const r = d.isMe ? 3 : 2.4
-                const cx = sx(d.x)
-                const cy = sy(d.y)
-                const team = d.participant.teamId === 100 ? 'var(--series-1)' : 'var(--series-2)'
-                return (
-                  <g key={pid} opacity={d.respawning ? 0.35 : 1}>
-                    <title>{d.participant.championName}</title>
-                    <circle cx={cx} cy={cy} r={r} fill={team} />
-                    {version && (
-                      <>
-                        <clipPath id={`champ-clip-${pid}`}>
-                          <circle cx={cx} cy={cy} r={r - 0.3} />
-                        </clipPath>
-                        <image
-                          href={champIconUrl(version, d.participant.championName)}
-                          x={cx - r}
-                          y={cy - r}
-                          width={r * 2}
-                          height={r * 2}
-                          clipPath={`url(#champ-clip-${pid})`}
-                          preserveAspectRatio="xMidYMid slice"
-                        />
-                      </>
-                    )}
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={r}
-                      fill="none"
-                      stroke={d.isMe ? 'var(--brand)' : team}
-                      strokeWidth={d.isMe ? 0.9 : 0.55}
-                    />
-                  </g>
-                )
-              })}
-              {mapNotes.map((note, i) => (
-                <g
-                  key={`note-${i}`}
-                  className="map-note"
-                  onMouseMove={e => tooltip.show(e, note.title, [note.tip])}
-                  onMouseLeave={tooltip.hide}
-                >
-                  {note.from && (
-                    <line
-                      x1={sx(note.from.x)}
-                      y1={sy(note.from.y)}
-                      x2={sx(note.x)}
-                      y2={sy(note.y)}
-                      stroke="var(--status-warn)"
-                      strokeWidth="0.4"
-                      strokeDasharray="1.2 1"
-                      opacity="0.8"
-                    />
-                  )}
-                  <circle className="note-pulse" cx={sx(note.x)} cy={sy(note.y)} r="3.4" fill="none" stroke="var(--status-warn)" strokeWidth="0.5" />
-                  <circle cx={sx(note.x)} cy={sy(note.y)} r="1.7" fill="var(--status-warn)" />
-                  <text className="note-glyph" x={sx(note.x)} y={sy(note.y) + 0.85} textAnchor="middle">
-                    !
-                  </text>
-                </g>
-              ))}
-            </svg>
-            {tooltip.node}
-
-            {activeCluster && (
-              <div className="moment-card" key={activeCluster[0]!.title}>
-                {activeCluster.map((moment, i) => (
-                  <div key={i} className="moment-entry">
-                    <div className="moment-head">
-                      <span
-                        className="sev-chip"
-                        style={{ background: KIND_STYLE[moment.kind].bg, color: KIND_STYLE[moment.kind].text }}
-                      >
-                        {KIND_STYLE[moment.kind].label}
-                      </span>
-                      <strong>{moment.title}</strong>
-                      {i === 0 && clusterIndex >= 0 && (
-                        <span className="moment-count">
-                          {clusterIndex + 1} of {clusters.length}
-                        </span>
-                      )}
-                    </div>
-                    {moment.note && <p>{moment.note}</p>}
-                  </div>
                 ))}
-                <div className="moment-actions">
-                  {clock < duration ? (
-                    <button className="play-btn" onClick={resume}>
-                      Continue
-                    </button>
+              </g>
+              {spot && (
+                <>
+                  <defs>
+                    <mask id="spotlight-mask">
+                      <rect x="0" y="0" width="100" height="100" fill="white" />
+                      <circle cx={spot.x} cy={spot.y} r="19" fill="black" />
+                    </mask>
+                  </defs>
+                  <rect
+                    className="spotlight"
+                    x="0.5"
+                    y="0.5"
+                    width="99"
+                    height="99"
+                    rx="4"
+                    fill="black"
+                    opacity="0.4"
+                    mask="url(#spotlight-mask)"
+                  />
+                </>
+              )}
+            </svg>
+            <span className="map-clock">{mmss(clock)}</span>
+            <div className="killfeed">
+              {killfeed.map(k => (
+                <div className="kf-entry" key={`${k.timestamp}-${k.victimId}`}>
+                  {k.killerId >= 1 && k.killerId <= 10 ? (
+                    <ChampIcon name={champByPid.get(k.killerId) ?? null} size={18} />
                   ) : (
-                    <button className="play-btn" onClick={restart}>
-                      Watch again
-                    </button>
+                    <span className="kf-exec">⌀</span>
                   )}
-                  <label className="autopause-toggle">
-                    <input type="checkbox" checked={autoPause} onChange={e => setAutoPause(e.target.checked)} />
-                    Pause at moments
-                  </label>
+                  <svg viewBox="0 0 10 10" className="kf-x" aria-hidden="true">
+                    <path d="M2 2 L8 8 M8 2 L2 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                  <ChampIcon name={champByPid.get(k.victimId) ?? null} size={18} />
                 </div>
-              </div>
-            )}
+              ))}
+            </div>
+            {mapTip.node}
           </div>
 
-          <svg className="gold-strip" viewBox="0 0 560 44" role="img" aria-label="Blue team gold lead over time">
-            <line x1="0" x2="560" y1="22" y2="22" stroke="var(--grid)" strokeWidth="1" strokeDasharray="3 3" />
-            <polyline
-              fill="none"
-              stroke="var(--muted)"
-              strokeWidth="1.5"
-              points={goldDiff
-                .map((g, i) => `${(i / Math.max(1, goldDiff.length - 1)) * 560},${22 - (g / maxGold) * 18}`)
-                .join(' ')}
-            />
-            <line
-              x1={(clock / duration) * 560}
-              x2={(clock / duration) * 560}
-              y1="2"
-              y2="42"
-              stroke="var(--brand)"
-              strokeWidth="1.5"
-            />
-            <text x="4" y="10">
-              {me?.teamId === 100 ? 'your team' : 'enemy team'} gold lead up
-            </text>
-          </svg>
+          <div className="timeline-wrap">
+            <svg
+              viewBox={`0 0 ${TL_W} ${TL_H}`}
+              className="timeline"
+              role="img"
+              aria-label="Your team's gold lead over time; click or drag to seek"
+              onPointerDown={e => {
+                scrubbing.current = true
+                e.currentTarget.setPointerCapture(e.pointerId)
+                seekFromPointer(e)
+              }}
+              onPointerMove={e => scrubbing.current && seekFromPointer(e)}
+              onPointerUp={() => (scrubbing.current = false)}
+            >
+              <defs>
+                <clipPath id="tl-above">
+                  <rect x="0" y="0" width={TL_W} height={y0} />
+                </clipPath>
+                <clipPath id="tl-below">
+                  <rect x="0" y={y0} width={TL_W} height={TL_H - y0} />
+                </clipPath>
+              </defs>
+              <path d={leadArea} fill="var(--series-1)" opacity="0.25" clipPath="url(#tl-above)" />
+              <path d={leadArea} fill="var(--series-2)" opacity="0.25" clipPath="url(#tl-below)" />
+              <line x1="0" x2={TL_W} y1={y0} y2={y0} stroke="var(--grid)" strokeWidth="1" strokeDasharray="3 3" />
+              <polyline fill="none" stroke="var(--ink-2)" strokeWidth="1.5" points={leadLine} />
+              {clusters.map((c, i) => (
+                <line
+                  key={`cl-${i}`}
+                  x1={tx(c[0]!.timestamp)}
+                  x2={tx(c[0]!.timestamp)}
+                  y1={plotBot + 4}
+                  y2={plotBot + 9}
+                  stroke="var(--baseline)"
+                  strokeWidth="1.5"
+                />
+              ))}
+              {activeMonsters.length >= 0 &&
+                monsters.map((m, i) => (
+                  <rect
+                    key={`tl-obj-${i}`}
+                    x={tx(m.timestamp) - 2.4}
+                    y={ty(leadAt(m.timestamp)) - 2.4}
+                    width="4.8"
+                    height="4.8"
+                    transform={`rotate(45 ${tx(m.timestamp)} ${ty(leadAt(m.timestamp))})`}
+                    fill={m.team === me?.teamId ? 'var(--status-warn)' : 'var(--surface)'}
+                    stroke="var(--status-warn)"
+                    strokeWidth="1"
+                    onMouseMove={e =>
+                      timelineTip.show(e, `${mmss(m.timestamp)} — ${m.team === me?.teamId ? 'Objective secured' : 'Objective lost'}`, [
+                        `Gold swing context: ${leadAt(m.timestamp) >= 0 ? '+' : ''}${Math.round(leadAt(m.timestamp)).toLocaleString()} at the time.`,
+                      ])
+                    }
+                    onMouseLeave={timelineTip.hide}
+                  />
+                ))}
+              {myKillMarks.map((k, i) => (
+                <circle
+                  key={`tl-k-${i}`}
+                  cx={tx(k.timestamp)}
+                  cy={ty(leadAt(k.timestamp))}
+                  r="2.6"
+                  fill="var(--status-good)"
+                  stroke="var(--surface)"
+                  strokeWidth="1"
+                  onMouseMove={e =>
+                    timelineTip.show(e, `${mmss(k.timestamp)} — You killed ${champByPid.get(k.victimId) ?? '?'}`, [])
+                  }
+                  onMouseLeave={timelineTip.hide}
+                />
+              ))}
+              {myDeathMarks.map((k, i) => (
+                <g
+                  key={`tl-d-${i}`}
+                  onMouseMove={e =>
+                    timelineTip.show(e, `${mmss(k.timestamp)} — Died to ${champByPid.get(k.killerId) ?? 'the enemy team'}`, [])
+                  }
+                  onMouseLeave={timelineTip.hide}
+                >
+                  <circle cx={tx(k.timestamp)} cy={ty(leadAt(k.timestamp))} r="3.2" fill="var(--status-critical)" stroke="var(--surface)" strokeWidth="1" />
+                  <path
+                    d={`M ${tx(k.timestamp) - 1.2} ${ty(leadAt(k.timestamp)) - 1.2} l 2.4 2.4 M ${tx(k.timestamp) + 1.2} ${ty(leadAt(k.timestamp)) - 1.2} l -2.4 2.4`}
+                    stroke="#ffffff"
+                    strokeWidth="0.9"
+                    strokeLinecap="round"
+                  />
+                </g>
+              ))}
+              <text x="4" y={plotTop + 6}>{`+${Math.round(maxLead / 1000)}k`}</text>
+              <text x="4" y={plotBot}>{`-${Math.round(maxLead / 1000)}k`}</text>
+              <line
+                x1={tx(clock)}
+                x2={tx(clock)}
+                y1="2"
+                y2={TL_H - 12}
+                stroke="var(--brand)"
+                strokeWidth="1.5"
+              />
+              <circle cx={tx(clock)} cy="4" r="3" fill="var(--brand)" />
+            </svg>
+            {timelineTip.node}
+          </div>
 
           <div className="replay-controls">
             <button className="play-btn" onClick={() => (clock >= duration ? restart() : setPlaying(p => !p))}>
@@ -647,30 +868,62 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
             <span className="replay-clock">
               {mmss(clock)} / {mmss(duration)}
             </span>
-            <input
-              className="scrubber"
-              type="range"
-              min={0}
-              max={duration}
-              step={1000}
-              value={clock}
-              onChange={e => seek(Number(e.target.value))}
-            />
             <div className="speed-group">
               {SPEEDS.map(s => (
-                <button
-                  key={s}
-                  className={`chip-btn${speed === s ? ' active' : ''}`}
-                  onClick={() => setSpeed(s)}
-                >
+                <button key={s} className={`chip-btn${speed === s ? ' active' : ''}`} onClick={() => setSpeed(s)}>
                   {s}x
                 </button>
               ))}
             </div>
+            <button className={`chip-btn${showWards ? ' active' : ''}`} onClick={() => setShowWards(v => !v)}>
+              Wards
+            </button>
+            <button className={`chip-btn${autoPause ? ' active' : ''}`} onClick={() => setAutoPause(v => !v)}>
+              Pause at moments
+            </button>
           </div>
         </div>
 
         <aside className="moment-list">
+          {activeCluster ? (
+            <div className="current-moment" key={activeCluster[0]!.title}>
+              {activeCluster.map((moment, i) => (
+                <div key={i} className="moment-entry">
+                  <div className="moment-head">
+                    <span
+                      className="sev-chip"
+                      style={{ background: KIND_STYLE[moment.kind].bg, color: KIND_STYLE[moment.kind].text }}
+                    >
+                      {KIND_STYLE[moment.kind].label}
+                    </span>
+                    <strong>{moment.title}</strong>
+                    {i === 0 && clusterIndex >= 0 && (
+                      <span className="moment-count">
+                        {clusterIndex + 1} of {clusters.length}
+                      </span>
+                    )}
+                  </div>
+                  {moment.note && <p>{moment.note}</p>}
+                </div>
+              ))}
+              <div className="moment-actions">
+                {clock < duration ? (
+                  <button className="play-btn" onClick={resume}>
+                    Continue
+                  </button>
+                ) : (
+                  <button className="play-btn" onClick={restart}>
+                    Watch again
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="current-moment idle">
+              Playing. The replay pauses itself at coaching moments and the notes land here; space
+              toggles play, the gold chart scrubs.
+            </div>
+          )}
           <h4>Moments</h4>
           {moments
             .filter(m => m.autoPause || m.kind === 'kill')

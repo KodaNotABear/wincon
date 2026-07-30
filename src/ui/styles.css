@@ -1018,13 +1018,120 @@ footer {
   fill: var(--ink);
   letter-spacing: 0.08em;
 }
-.gold-strip {
+/* Director's-cut camera + spotlight */
+@media (prefers-reduced-motion: no-preference) {
+  .map-camera {
+    transition: transform 0.75s cubic-bezier(0.3, 0.75, 0.25, 1);
+  }
+  .spotlight {
+    animation: fade-in 0.6s ease-out backwards;
+  }
+}
+.map-clock {
+  position: absolute;
+  top: 16px;
+  left: 18px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px 9px;
+  pointer-events: none;
+}
+.killfeed {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  pointer-events: none;
+}
+.kf-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px 7px;
+  animation: kf-in 0.25s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+}
+.kf-entry .champ-icon {
+  border-radius: 4px;
+}
+.kf-x {
+  width: 9px;
+  height: 9px;
+  color: var(--status-critical);
+}
+.kf-exec {
+  color: var(--muted);
+  font-size: 12px;
+}
+@keyframes kf-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+
+/* Interactive gold timeline */
+.timeline-wrap {
+  position: relative;
+  margin-top: 8px;
+}
+.timeline {
   display: block;
   width: 100%;
-  margin-top: 8px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.timeline text {
+  pointer-events: none;
+}
+
+/* Docked coach panel in the sidebar */
+.current-moment {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 11px 13px;
+  margin-bottom: 12px;
+  animation: rise 0.25s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+}
+.current-moment.idle {
+  border-left-color: var(--baseline);
+  color: var(--muted);
+  font-size: 12.5px;
+  box-shadow: none;
+}
+.current-moment .moment-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.current-moment p {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.current-moment .moment-actions {
+  margin-top: 10px;
 }
 .replay-controls {
   display: flex;
@@ -1062,18 +1169,6 @@ footer {
   display: flex;
   gap: 4px;
 }
-.moment-card {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--card-shadow);
-  padding: 12px 14px;
-  animation: rise 0.25s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
-}
 .moment-head {
   display: flex;
   align-items: center;
@@ -1081,27 +1176,10 @@ footer {
   font-family: var(--font-display);
   font-size: 14px;
 }
-.moment-card p {
-  margin: 6px 0 8px;
-  font-size: 13px;
-  color: var(--ink-2);
-  line-height: 1.5;
-}
 .moment-actions {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-.autopause-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.autopause-toggle input {
-  accent-color: var(--brand);
 }
 .moment-list {
   background: var(--surface);

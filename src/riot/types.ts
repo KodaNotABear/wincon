@@ -77,6 +77,7 @@ export type TimelineEventDto =
   | EliteMonsterKillEvent
   | BuildingKillEvent
   | ItemPurchasedEvent
+  | WardPlacedEvent
   | OtherEvent
 
 export interface ChampionKillEvent {
@@ -109,6 +110,14 @@ export interface BuildingKillEvent {
   /** 0 when minions finished the building. */
   killerId?: number
   assistingParticipantIds?: number[]
+}
+
+/** No position in the payload, but the placer's position at that timestamp is known. */
+export interface WardPlacedEvent {
+  type: 'WARD_PLACED'
+  timestamp: number
+  creatorId: number
+  wardType: string // YELLOW_TRINKET, CONTROL_WARD, SIGHT_WARD, BLUE_TRINKET, ...
 }
 
 /** Purchases only happen at the shop, so these mark base visits precisely. */
