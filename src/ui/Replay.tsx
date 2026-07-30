@@ -25,7 +25,7 @@ import type {
 import { normalizeDuration } from '../riot/types'
 import { buildMoments, clusterMoments, type Moment, type MomentKind } from '../analysis/moments'
 import { ChampIcon, champIconUrl, useDdragonVersion } from './ddragon'
-import { RiftBackdrop, sx, sy } from './RiftMap'
+import { BARON_PIT, DRAGON_PIT, LANE_TOWERS, RiftBackdrop, sx, sy } from './RiftMap'
 import { useTooltip } from './shared'
 
 interface RawEntry {
@@ -33,8 +33,16 @@ interface RawEntry {
   timeline: TimelineDto
 }
 
-// 45 in-game seconds per real second at 1x: a 30 minute game replays in 40s.
-const BASE_RATE = 45
+// 30 in-game seconds per real second at 1x: a 30 minute game replays in a minute.
+const BASE_RATE = 30
+
+// Approximate objective spawn rules for the pit timers. Close enough for a
+// replay; the kill events themselves are always exact.
+const DRAGON_FIRST_SPAWN = 5 * 60_000
+const DRAGON_RESPAWN = 5 * 60_000
+const HERALD_SPAWN = 16 * 60_000
+const BARON_SPAWN = 25 * 60_000
+const BARON_RESPAWN = 6 * 60_000
 const SPEEDS = [0.5, 1, 2, 4]
 const PING_LIFE_MS = 30_000 // in-game lifetime of a kill ping
 const TRAIL_FRAMES = 6 // minutes of movement history behind your champion
@@ -145,7 +153,12 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       timeline.info.frames.flatMap(f =>
         f.events
           .filter((e): e is EliteMonsterKillEvent => e.type === 'ELITE_MONSTER_KILL')
-          .map(e => ({ timestamp: e.timestamp, position: e.position, team: e.killerTeamId })),
+          .map(e => ({
+            timestamp: e.timestamp,
+            position: e.position,
+            team: e.killerTeamId,
+            monsterType: e.monsterType,
+          })),
       ),
     [timeline],
   )
@@ -211,6 +224,9 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       for (const anchor of list) {
         const prev = cleaned[cleaned.length - 1]
         if (anchor.kind === 'base' && prev?.kind === 'base' && anchor.ts - prev.ts <= 3_000) continue
+        // Thin out fight pins: a burst of kill participations seconds apart
+        // made dots ping-pong. Deaths and shop trips always survive.
+        if (anchor.kind === 'pin' && prev && anchor.ts - prev.ts <= 4_000) continue
         cleaned.push(anchor)
       }
       map.set(pid, cleaned)
@@ -241,7 +257,10 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     if (b.kind === 'base' || !b.pos) return a.pos ?? null
     if (!a.pos) return b.pos
     const alpha = b.ts === a.ts ? 0 : (t - a.ts) / (b.ts - a.ts)
-    return { x: a.pos.x + (b.pos.x - a.pos.x) * alpha, y: a.pos.y + (b.pos.y - a.pos.y) * alpha }
+    // Smoothstep: dots accelerate out of one anchor and settle into the next
+    // instead of bouncing between straight lines at constant speed.
+    const eased = alpha * alpha * (3 - 2 * alpha)
+    return { x: a.pos.x + (b.pos.x - a.pos.x) * eased, y: a.pos.y + (b.pos.y - a.pos.y) * eased }
   }
 
   const isRespawning = (pid: number, t: number): boolean =>
@@ -314,7 +333,8 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
   useEffect(() => {
     if (!playing) return
     let raf = 0
-    let last = performance.now()
+    const startedAt = performance.now()
+    let last = startedAt
     let lastStep = last
     let stopped = false
     // Advance the clock by wall time, clamped so an occlusion gap never
@@ -324,7 +344,17 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
       const dt = Math.min(250, now - last)
       last = now
       lastStep = now
-      const next = clockRef.current + dt * BASE_RATE * speed
+      // Broadcast pacing: ease in after every resume, and slow down as the
+      // next coaching moment approaches, so there's time to digest.
+      let pace = 0.35 + 0.65 * Math.min(1, (now - startedAt) / 1500)
+      if (autoPause) {
+        const upcoming = clusters.find(c => c[0]!.timestamp > clockRef.current)
+        if (upcoming) {
+          const gap = upcoming[0]!.timestamp - clockRef.current
+          if (gap < 12_000) pace *= 0.35 + 0.65 * (gap / 12_000)
+        }
+      }
+      const next = clockRef.current + dt * BASE_RATE * speed * pace
       const crossed = autoPause
         ? clusters.find(c => c[0]!.timestamp > clockRef.current && c[0]!.timestamp <= next)
         : undefined
@@ -491,6 +521,52 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     ? { x: cam.tx + cam.s * sx(focusPos.x), y: cam.ty + cam.s * sy(focusPos.y) }
     : null
 
+  // Live tower states: match each BUILDING_KILL to the nearest known turret.
+  const towerStates = useMemo(
+    () =>
+      LANE_TOWERS.map(tower => {
+        const kill = towers.find(
+          b => Math.hypot(sx(b.position.x) - tower.x, sy(b.position.y) - tower.y) < 4,
+        )
+        return { ...tower, destroyedAt: kill?.timestamp ?? Number.POSITIVE_INFINITY }
+      }),
+    [towers],
+  )
+
+  // Pit timers from the approximate spawn rules plus the exact kill events.
+  const pitTimers: { x: number; y: number; label: string; remaining: number | null }[] = []
+  {
+    const dragonKills = monsters.filter(m => m.monsterType.includes('DRAGON') && m.timestamp <= clock)
+    const lastDragon = dragonKills[dragonKills.length - 1]
+    const dragonNext = lastDragon ? lastDragon.timestamp + DRAGON_RESPAWN : DRAGON_FIRST_SPAWN
+    pitTimers.push({
+      ...DRAGON_PIT,
+      label: 'DRAKE',
+      remaining: clock >= dragonNext ? null : dragonNext - clock,
+    })
+    if (clock < BARON_SPAWN) {
+      const heraldDead = monsters.some(m => m.monsterType === 'RIFTHERALD' && m.timestamp <= clock)
+      if (heraldDead) {
+        pitTimers.push({ ...BARON_PIT, label: 'BARON', remaining: BARON_SPAWN - clock })
+      } else {
+        pitTimers.push({
+          ...BARON_PIT,
+          label: 'HERALD',
+          remaining: clock >= HERALD_SPAWN ? null : HERALD_SPAWN - clock,
+        })
+      }
+    } else {
+      const baronKills = monsters.filter(m => m.monsterType === 'BARON_NASHOR' && m.timestamp <= clock)
+      const lastBaron = baronKills[baronKills.length - 1]
+      const baronNext = lastBaron ? lastBaron.timestamp + BARON_RESPAWN : BARON_SPAWN
+      pitTimers.push({
+        ...BARON_PIT,
+        label: 'BARON',
+        remaining: clock >= baronNext ? null : baronNext - clock,
+      })
+    }
+  }
+
   const activePings = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < PING_LIFE_MS)
   const activeMonsters = monsters.filter(m => clock >= m.timestamp && clock - m.timestamp < PING_LIFE_MS * 1.5)
   const activeTowers = towers.filter(t => clock >= t.timestamp && clock - t.timestamp < PING_LIFE_MS * 1.5)
@@ -568,6 +644,43 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                       opacity="0.5"
                     />
                   ))}
+                {towerStates.map((t, i) =>
+                  clock < t.destroyedAt ? (
+                    <rect
+                      key={`tw-${i}`}
+                      x={t.x - 1}
+                      y={t.y - 1}
+                      width="2"
+                      height="2"
+                      transform={`rotate(45 ${t.x} ${t.y})`}
+                      fill={t.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
+                      stroke="var(--map-bg)"
+                      strokeWidth="0.35"
+                      opacity="0.85"
+                    />
+                  ) : (
+                    <circle key={`tw-${i}`} cx={t.x} cy={t.y} r="0.7" fill="var(--map-camp)" opacity="0.6" />
+                  ),
+                )}
+                {pitTimers.map((pit, i) => (
+                  <g key={`pit-${i}`} className="pit-timer">
+                    {pit.remaining === null ? (
+                      <>
+                        <circle className="note-pulse" cx={pit.x} cy={pit.y} r="3" fill="none" stroke="var(--status-warn)" strokeWidth="0.5" />
+                        <text className="spawn-label" x={pit.x} y={pit.y + 4.8} textAnchor="middle">
+                          {pit.label} UP
+                        </text>
+                      </>
+                    ) : (
+                      <>
+                        <circle cx={pit.x} cy={pit.y} r="2.4" fill="none" stroke="var(--map-camp)" strokeWidth="0.5" strokeDasharray="1.2 1" />
+                        <text className="spawn-label" x={pit.x} y={pit.y + 4.8} textAnchor="middle">
+                          {pit.label} {mmss(pit.remaining)}
+                        </text>
+                      </>
+                    )}
+                  </g>
+                ))}
                 {activeWards.map((w, i) => {
                   const fade = Math.min(1, (w.ts + w.life - clock) / 10_000)
                   const mine = w.creatorId === me?.participantId

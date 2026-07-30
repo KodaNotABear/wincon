@@ -57,8 +57,9 @@ const BRUSHES = [
   at(11800, 3100),
 ]
 
-// Lane turrets (t1/t2/t3 per lane per side), drawn as tiny team-tinted marks.
-const TOWERS: { x: number; y: number; team: 100 | 200 }[] = [
+// Lane turrets (t1/t2/t3 per lane per side), in svg coordinates. The replay
+// matches BUILDING_KILL events against these to show live tower states.
+export const LANE_TOWERS: { x: number; y: number; team: 100 | 200 }[] = [
   { ...at(981, 10441), team: 100 },
   { ...at(1512, 6699), team: 100 },
   { ...at(1169, 4287), team: 100 },
@@ -157,7 +158,7 @@ function StylizedRift() {
 
       {/* Turrets */}
       <g opacity="0.5">
-        {TOWERS.map((t, i) => (
+        {LANE_TOWERS.map((t, i) => (
           <rect
             key={`tower-${i}`}
             x={t.x - 0.9}
