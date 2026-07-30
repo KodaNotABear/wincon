@@ -3,27 +3,10 @@
 
 import { useEffect, useState } from 'react'
 import type { MatchReport } from '../analysis/report'
+import { ChampIcon, championIdMap } from './ddragon'
 import { fmtSigned } from './shared'
 
 const POLL_MS = 4000
-
-// championId -> ddragon id ("MissFortune"), matching report championName.
-let champMapPromise: Promise<Record<number, string>> | null = null
-function championNames(): Promise<Record<number, string>> {
-  champMapPromise ??= (async () => {
-    const versions: string[] = await fetch('https://ddragon.leagueoflegends.com/api/versions.json').then(r => r.json())
-    const data = await fetch(
-      `https://ddragon.leagueoflegends.com/cdn/${versions[0]}/data/en_US/champion.json`,
-    ).then(r => r.json())
-    const map: Record<number, string> = {}
-    for (const champ of Object.values<any>(data.data)) map[Number(champ.key)] = champ.id
-    return map
-  })().catch(() => {
-    champMapPromise = null
-    return {}
-  })
-  return champMapPromise
-}
 
 type LiveState =
   | { kind: 'off' }
@@ -44,7 +27,7 @@ export function LivePanel({ matches }: { matches: MatchReport[] }) {
           const me = session.myTeam?.find?.((c: any) => c.cellId === session.localPlayerCellId)
           const championId: number = me?.championId || me?.championPickIntent || 0
           if (championId > 0) {
-            const name = (await championNames())[championId] ?? null
+            const name = (await championIdMap())[championId] ?? null
             if (!cancelled) {
               setState({ kind: 'select', championId, championName: name, locked: Boolean(me?.championId) })
             }
@@ -95,6 +78,7 @@ export function LivePanel({ matches }: { matches: MatchReport[] }) {
   return (
     <div className="live-panel">
       <span className="live-dot" />
+      {state.championName && <ChampIcon name={state.championName} size={22} />}
       <strong>
         {state.locked ? 'Locked' : 'Hovering'}: {name}.
       </strong>

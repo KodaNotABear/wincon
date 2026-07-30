@@ -1,12 +1,20 @@
 // Full-screen match replay driven by timeline frames: all ten champions
-// animate along their per-minute positions, kills and objectives ping the
-// map, and the replay auto-pauses at coaching moments. The analysis lives
-// in src/analysis/moments.ts; this component is playback and presentation.
+// animate along their per-minute positions (as icon dots once Data Dragon
+// resolves), kills, objectives, and towers ping the map, your champion drags
+// a movement trail, and the replay auto-pauses at coaching moments. The
+// analysis lives in src/analysis/moments.ts; this component is playback.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChampionKillEvent, EliteMonsterKillEvent, MatchDto, TimelineDto } from '../riot/types'
+import type {
+  BuildingKillEvent,
+  ChampionKillEvent,
+  EliteMonsterKillEvent,
+  MatchDto,
+  TimelineDto,
+} from '../riot/types'
 import { normalizeDuration } from '../riot/types'
 import { buildMoments, type Moment, type MomentKind } from '../analysis/moments'
+import { ChampIcon, champIconUrl, useDdragonVersion } from './ddragon'
 import { RiftBackdrop, sx, sy } from './RiftMap'
 
 interface RawEntry {
@@ -18,6 +26,7 @@ interface RawEntry {
 const BASE_RATE = 60
 const SPEEDS = [0.5, 1, 2, 4]
 const PING_LIFE_MS = 30_000 // in-game lifetime of a kill ping
+const TRAIL_FRAMES = 6 // minutes of movement history behind your champion
 
 const KIND_STYLE: Record<MomentKind, { label: string; bg: string; text: string }> = {
   death: { label: 'DEATH', bg: 'var(--status-critical)', text: '#ffffff' },
@@ -74,6 +83,7 @@ export function Replay({
 
 function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; onClose: () => void }) {
   const { match, timeline } = data
+  const version = useDdragonVersion()
   const duration = normalizeDuration(match.info.gameDuration) * 1000
   const me = match.info.participants.find(p => p.puuid === puuid)
   const opp = me
@@ -81,13 +91,14 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     : undefined
 
   const moments = useMemo(() => buildMoments(match, timeline, puuid), [match, timeline, puuid])
+  const pauseMoments = useMemo(() => moments.filter(m => m.autoPause), [moments])
 
   const kills = useMemo(
     () =>
       timeline.info.frames.flatMap(f =>
         f.events
           .filter((e): e is ChampionKillEvent => e.type === 'CHAMPION_KILL')
-          .map(e => ({ timestamp: e.timestamp, position: e.position, victimTeam: e.victimId <= 5 ? 100 : 200, mine: false })),
+          .map(e => ({ timestamp: e.timestamp, position: e.position, victimTeam: e.victimId <= 5 ? 100 : 200 })),
       ),
     [timeline],
   )
@@ -97,6 +108,16 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
         f.events
           .filter((e): e is EliteMonsterKillEvent => e.type === 'ELITE_MONSTER_KILL')
           .map(e => ({ timestamp: e.timestamp, position: e.position, team: e.killerTeamId })),
+      ),
+    [timeline],
+  )
+  const towers = useMemo(
+    () =>
+      timeline.info.frames.flatMap(f =>
+        f.events
+          .filter((e): e is BuildingKillEvent => e.type === 'BUILDING_KILL')
+          // teamId is the building's owner; the destroyer is the other team.
+          .map(e => ({ timestamp: e.timestamp, position: e.position, team: e.teamId === 100 ? 200 : 100 })),
       ),
     [timeline],
   )
@@ -168,7 +189,34 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     setPlaying(true)
   }
 
-  // Interpolated positions for everyone alive on the map at `clock`.
+  // Resume from a moment card. The tiny clock nudge steps past the paused
+  // moment so the crossing check can't re-match it, and playback visibly
+  // advances even when the next moment is seconds away.
+  const resume = () => {
+    clockRef.current = Math.min(duration, clockRef.current + 250)
+    setClock(clockRef.current)
+    setActiveMoment(null)
+    setPlaying(true)
+  }
+
+  // Space toggles play/pause (Escape close is handled by the wrapper).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return
+      e.preventDefault()
+      if (clockRef.current >= duration) {
+        restart()
+      } else {
+        setActiveMoment(null)
+        setPlaying(p => !p)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duration])
+
+  // Interpolated positions for everyone on the map at `clock`.
   const interval = timeline.info.frameInterval || 60_000
   const frames = timeline.info.frames
   const idx = Math.min(Math.floor(clock / interval), frames.length - 1)
@@ -188,17 +236,32 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
     ]
   })
 
+  // Movement history for your champion: the last few minutes of positions.
+  const meDot = dots.find(d => d.isMe)
+  const trail: string[] = []
+  if (me && meDot) {
+    for (let i = Math.max(0, idx - TRAIL_FRAMES); i <= idx; i++) {
+      const pf = frames[i]?.participantFrames[String(me.participantId)]
+      if (pf) trail.push(`${sx(pf.position.x)},${sy(pf.position.y)}`)
+    }
+    trail.push(`${sx(meDot.x)},${sy(meDot.y)}`)
+  }
+
   const activePings = kills.filter(k => clock >= k.timestamp && clock - k.timestamp < PING_LIFE_MS)
   const activeMonsters = monsters.filter(m => clock >= m.timestamp && clock - m.timestamp < PING_LIFE_MS * 1.5)
+  const activeTowers = towers.filter(t => clock >= t.timestamp && clock - t.timestamp < PING_LIFE_MS * 1.5)
   const maxGold = Math.max(1000, ...goldDiff.map(Math.abs))
+  const momentIndex = activeMoment ? pauseMoments.indexOf(activeMoment) : -1
 
   return (
     <>
       <header className="replay-head">
         <div className="replay-title">
+          <ChampIcon name={me?.championName ?? null} size={30} />
           <span className="replay-matchup">
             {me?.championName ?? '?'} <span className="vs">vs {opp?.championName ?? '?'}</span>
           </span>
+          <ChampIcon name={opp?.championName ?? null} size={22} />
           <span className={`result-badge ${me?.win ? 'win' : 'loss'}`}>{me?.win ? 'WIN' : 'LOSS'}</span>
           <span className="replay-date">
             {new Date(match.info.gameCreation).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ·{' '}
@@ -215,21 +278,49 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
           <div className="replay-map">
             <svg viewBox="0 0 100 100" role="img" aria-label="Match replay map">
               <RiftBackdrop />
+              {trail.length > 1 && (
+                <polyline
+                  points={trail.join(' ')}
+                  fill="none"
+                  stroke="var(--brand)"
+                  strokeWidth="0.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray="1.7 1.1"
+                  opacity="0.5"
+                />
+              )}
+              {activeTowers.map((t, i) => {
+                const age = (clock - t.timestamp) / (PING_LIFE_MS * 1.5)
+                return (
+                  <rect
+                    key={`tower-${i}`}
+                    x={sx(t.position.x) - 1.3}
+                    y={sy(t.position.y) - 1.3}
+                    width="2.6"
+                    height="2.6"
+                    fill="none"
+                    stroke={t.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
+                    strokeWidth="0.6"
+                    opacity={0.8 * (1 - age)}
+                  />
+                )
+              })}
               {activeMonsters.map((m, i) => {
                 const age = (clock - m.timestamp) / (PING_LIFE_MS * 1.5)
                 return (
-                  <g key={`mon-${i}`} opacity={1 - age}>
-                    <rect
-                      x={sx(m.position.x) - 1.8}
-                      y={sy(m.position.y) - 1.8}
-                      width="3.6"
-                      height="3.6"
-                      transform={`rotate(45 ${sx(m.position.x)} ${sy(m.position.y)})`}
-                      fill="none"
-                      stroke={m.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
-                      strokeWidth="0.7"
-                    />
-                  </g>
+                  <rect
+                    key={`mon-${i}`}
+                    x={sx(m.position.x) - 1.8}
+                    y={sy(m.position.y) - 1.8}
+                    width="3.6"
+                    height="3.6"
+                    transform={`rotate(45 ${sx(m.position.x)} ${sy(m.position.y)})`}
+                    fill="none"
+                    stroke={m.team === 100 ? 'var(--series-1)' : 'var(--series-2)'}
+                    strokeWidth="0.7"
+                    opacity={1 - age}
+                  />
                 )
               })}
               {activePings.map((k, i) => {
@@ -257,29 +348,47 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                   </g>
                 )
               })}
-              {dots.map(d => (
-                <g key={d.participant.participantId}>
-                  <circle
-                    cx={sx(d.x)}
-                    cy={sy(d.y)}
-                    r={d.isMe ? 2.6 : 2}
-                    fill={d.participant.teamId === 100 ? 'var(--series-1)' : 'var(--series-2)'}
-                    stroke={d.isMe ? 'var(--brand)' : 'var(--surface)'}
-                    strokeWidth={d.isMe ? 0.9 : 0.5}
-                  >
+              {dots.map(d => {
+                const pid = d.participant.participantId
+                const r = d.isMe ? 3 : 2.4
+                const cx = sx(d.x)
+                const cy = sy(d.y)
+                const team = d.participant.teamId === 100 ? 'var(--series-1)' : 'var(--series-2)'
+                return (
+                  <g key={pid}>
                     <title>{d.participant.championName}</title>
-                  </circle>
-                  {d.isMe && (
-                    <text className="you-label" x={sx(d.x)} y={sy(d.y) - 3.4} textAnchor="middle">
-                      YOU
-                    </text>
-                  )}
-                </g>
-              ))}
+                    <circle cx={cx} cy={cy} r={r} fill={team} />
+                    {version && (
+                      <>
+                        <clipPath id={`champ-clip-${pid}`}>
+                          <circle cx={cx} cy={cy} r={r - 0.3} />
+                        </clipPath>
+                        <image
+                          href={champIconUrl(version, d.participant.championName)}
+                          x={cx - r}
+                          y={cy - r}
+                          width={r * 2}
+                          height={r * 2}
+                          clipPath={`url(#champ-clip-${pid})`}
+                          preserveAspectRatio="xMidYMid slice"
+                        />
+                      </>
+                    )}
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={r}
+                      fill="none"
+                      stroke={d.isMe ? 'var(--brand)' : team}
+                      strokeWidth={d.isMe ? 0.9 : 0.55}
+                    />
+                  </g>
+                )
+              })}
             </svg>
 
             {activeMoment && (
-              <div className="moment-card">
+              <div className="moment-card" key={activeMoment.title}>
                 <div className="moment-head">
                   <span
                     className="sev-chip"
@@ -288,17 +397,16 @@ function ReplayInner({ data, puuid, onClose }: { data: RawEntry; puuid: string; 
                     {KIND_STYLE[activeMoment.kind].label}
                   </span>
                   <strong>{activeMoment.title}</strong>
+                  {momentIndex >= 0 && (
+                    <span className="moment-count">
+                      {momentIndex + 1} of {pauseMoments.length}
+                    </span>
+                  )}
                 </div>
                 {activeMoment.note && <p>{activeMoment.note}</p>}
                 <div className="moment-actions">
                   {clock < duration ? (
-                    <button
-                      className="play-btn"
-                      onClick={() => {
-                        setActiveMoment(null)
-                        setPlaying(true)
-                      }}
-                    >
+                    <button className="play-btn" onClick={resume}>
                       Continue
                     </button>
                   ) : (

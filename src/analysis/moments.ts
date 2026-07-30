@@ -80,7 +80,7 @@ export function buildMoments(match: MatchDto, timeline: TimelineDto, puuid: stri
                 ? `Killed by ${killer}. Early death number ${earlyDeathCount}; every one hands over plates and priority.`
                 : `Killed by ${killer} during laning. One early death is recoverable; the pattern to avoid is the second.`
           } else {
-            note = `Killed by ${killer}. ${deathCount} deaths so far; in the ${phase} game each one is 30+ seconds of your team playing 4v5.`
+            note = `Killed by ${killer}. Death ${deathCount}; in the ${phase} game that's 30+ seconds of 4v5.`
           }
           out.push({
             timestamp: kill.timestamp,
@@ -112,7 +112,7 @@ export function buildMoments(match: MatchDto, timeline: TimelineDto, puuid: stri
             timestamp: monster.timestamp,
             kind: 'objective',
             title: `${mmss(monster.timestamp)} — ${name} taken without you`,
-            note: `Your team secured ${name} and you weren't credited on it. If you were farming a side lane, that can be right; if you were just late, it's a habit to fix.`,
+            note: `Your team secured ${name} without you. Fine if you were pushing the opposite side lane on purpose; a problem if you were just late.`,
             position: monster.position,
             autoPause: true,
           })
@@ -154,9 +154,7 @@ export function buildMoments(match: MatchDto, timeline: TimelineDto, puuid: stri
     kind: 'end',
     title: `${mmss(durationMs)} — ${me.win ? 'Victory' : 'Defeat'}`,
     note: `${me.kills}/${me.deaths}/${me.assists} on ${me.championName}. ${
-      me.win
-        ? 'Find one thing from this game worth repeating and queue again.'
-        : 'One correctable pattern from this replay beats ten excuses; pick it and queue again.'
+      me.win ? 'GG.' : 'Pick one fix from this replay before the next queue.'
     }`,
     autoPause: true,
   })

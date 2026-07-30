@@ -1,4 +1,5 @@
 import type { MatchReport } from '../analysis/report'
+import { ChampIcon } from './ddragon'
 import { SEVERITY, fmtSigned } from './shared'
 
 export function MatchTable({
@@ -27,7 +28,7 @@ export function MatchTable({
         </thead>
         <tbody>
           {matches.map(m => (
-            <tr key={m.matchId}>
+            <tr key={m.matchId} className="match-row" onClick={() => onReplay(m.matchId)}>
               <td>
                 <button className="replay-btn" onClick={() => onReplay(m.matchId)}>
                   <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -38,7 +39,12 @@ export function MatchTable({
               </td>
               <td>{new Date(m.gameCreation).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</td>
               <td className="matchup">
-                {m.championName} <span className="vs">vs {m.opponentChampion ?? '?'}</span>
+                <span className="matchup-cell">
+                  <ChampIcon name={m.championName} size={22} />
+                  {m.championName} <span className="vs">vs</span>
+                  <ChampIcon name={m.opponentChampion} size={18} />
+                  <span className="vs">{m.opponentChampion ?? '?'}</span>
+                </span>
               </td>
               <td>{m.role ? m.role.charAt(0) + m.role.slice(1).toLowerCase() : '?'}</td>
               <td>

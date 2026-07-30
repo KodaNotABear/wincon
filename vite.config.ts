@@ -4,6 +4,7 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import { readLockfile } from './src/lcu/lockfile'
+import { syncAndAnalyze } from './src/server/syncPlayer'
 
 // Serve the per-player data files to the UI in dev. data/ is gitignored (it
 // holds personal match history), so it can't live in public/. Slugs and match
@@ -86,6 +87,42 @@ const lcuProxy = (): Plugin => ({
   },
 })
 
+// POST /api/sync {riotId}: the in-app player lookup. Runs the same sync +
+// analyze flow as the CLI, one at a time, using the API key from .env.
+const apiSync = (): Plugin => ({
+  name: 'api-sync',
+  configureServer(server) {
+    let busy = false
+    server.middlewares.use((req, res, next) => {
+      if (req.url?.split('?')[0] !== '/api/sync' || req.method !== 'POST') return next()
+      res.setHeader('Content-Type', 'application/json')
+      if (busy) {
+        res.statusCode = 429
+        res.end('{"error":"A sync is already running; wait for it to finish."}')
+        return
+      }
+      busy = true
+      let body = ''
+      req.on('data', chunk => (body += chunk))
+      req.on('end', async () => {
+        try {
+          const { riotId } = JSON.parse(body || '{}')
+          if (typeof riotId !== 'string' || !riotId.includes('#')) {
+            throw new Error('Riot ID must look like Name#TAG')
+          }
+          const result = await syncAndAnalyze(riotId)
+          res.end(JSON.stringify(result))
+        } catch (err) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Sync failed' }))
+        } finally {
+          busy = false
+        }
+      })
+    })
+  },
+})
+
 export default defineConfig({
-  plugins: [react(), serveData(), lcuProxy()],
+  plugins: [react(), serveData(), lcuProxy(), apiSync()],
 })

@@ -72,7 +72,7 @@ export interface Position {
   y: number
 }
 
-export type TimelineEventDto = ChampionKillEvent | EliteMonsterKillEvent | OtherEvent
+export type TimelineEventDto = ChampionKillEvent | EliteMonsterKillEvent | BuildingKillEvent | OtherEvent
 
 export interface ChampionKillEvent {
   type: 'CHAMPION_KILL'
@@ -91,6 +91,15 @@ export interface EliteMonsterKillEvent {
   monsterType: string // DRAGON, RIFTHERALD, BARON_NASHOR, HORDE, ...
   monsterSubType?: string
   assistingParticipantIds?: number[]
+  position: Position
+}
+
+export interface BuildingKillEvent {
+  type: 'BUILDING_KILL'
+  timestamp: number
+  /** Team that OWNED the destroyed building, not the team that killed it. */
+  teamId: 100 | 200
+  buildingType: string
   position: Position
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { buildAggregate, type ClimbReport } from '../analysis/report'
+import { buildAggregate, type ClimbReport, type MatchReport } from '../analysis/report'
 import { buildInsights } from '../analysis/insights'
+import { ChampIcon } from './ddragon'
 import { DeathMap } from './DeathMap'
 import { LivePanel } from './LivePanel'
 import { MatchTable } from './MatchTable'
@@ -47,6 +48,32 @@ export function App() {
       .catch(() => setFailed(true))
   }, [slug])
 
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+
+  const addPlayer = async (riotId: string): Promise<boolean> => {
+    setSyncBusy(true)
+    setSyncError(null)
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ riotId }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error ?? 'Sync failed')
+      const list: PlayerEntry[] = await fetch('/players.json').then(r => r.json())
+      setPlayers(list.filter(p => p.games > 0))
+      setSlug(body.slug)
+      return true
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed')
+      return false
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
   if (failed) return <Onboarding />
   if (!players || !slug || !report) return null
   return (
@@ -55,6 +82,9 @@ export function App() {
       slug={slug}
       players={players}
       onSelectPlayer={setSlug}
+      onAddPlayer={addPlayer}
+      syncBusy={syncBusy}
+      syncError={syncError}
     />
   )
 }
@@ -115,13 +145,21 @@ function Dashboard({
   slug,
   players,
   onSelectPlayer,
+  onAddPlayer,
+  syncBusy,
+  syncError,
 }: {
   report: ClimbReport
   slug: string
   players: PlayerEntry[]
   onSelectPlayer: (slug: string) => void
+  onAddPlayer: (riotId: string) => Promise<boolean>
+  syncBusy: boolean
+  syncError: string | null
 }) {
   const { player } = report
+  const [lookupOpen, setLookupOpen] = useState(false)
+  const [lookupValue, setLookupValue] = useState('')
   const [allInsights, setAllInsights] = useState(false)
   const [allGames, setAllGames] = useState(false)
   const [roleFilter, setRoleFilter] = useState<string | null>(null)
@@ -183,9 +221,39 @@ function Dashboard({
               {player.gameName}#{player.tagLine}
             </strong>
           )}{' '}
-          · {report.matches.length} ranked games · {window}
+          · {report.matches.length} ranked games · {window}{' '}
+          <button className="chip-btn" onClick={() => setLookupOpen(open => !open)}>
+            {lookupOpen ? 'Cancel' : 'Add player'}
+          </button>
         </span>
       </header>
+
+      {lookupOpen && (
+        <form
+          className="lookup-row"
+          onSubmit={async e => {
+            e.preventDefault()
+            const riotId = lookupValue.trim()
+            if (!riotId || syncBusy) return
+            if (await onAddPlayer(riotId)) {
+              setLookupOpen(false)
+              setLookupValue('')
+            }
+          }}
+        >
+          <input
+            className="lookup-input"
+            placeholder="GameName#TAG"
+            value={lookupValue}
+            autoFocus
+            onChange={e => setLookupValue(e.target.value)}
+          />
+          <button className="play-btn" type="submit" disabled={syncBusy}>
+            {syncBusy ? 'Syncing, this takes a moment…' : 'Look up'}
+          </button>
+          {syncError && <span className="lookup-error">{syncError}</span>}
+        </form>
+      )}
 
       <div className="filter-bar">
         <button
@@ -252,6 +320,8 @@ function Dashboard({
         />
       </div>
 
+      {report.matches[0] && <HeroReplay latest={report.matches[0]} onWatch={() => setReplayId(report.matches[0]!.matchId)} />}
+
       <LivePanel matches={report.matches} />
 
       {report.isDemo && (
@@ -298,7 +368,8 @@ function Dashboard({
         <TrendChart matches={filtered} metric={metric} onMetricChange={setMetric} />
       </div>
 
-      <h2 className="section-title">Game by game</h2>
+      <h2 className="section-title">Replays</h2>
+      <p className="section-sub">Every game replays on the map. Click one.</p>
       <MatchTable matches={shownGames} onReplay={setReplayId} />
       {filtered.length > GAMES_SHOWN && (
         <button className="ghost-btn" onClick={() => setAllGames(v => !v)}>
@@ -318,6 +389,31 @@ function Dashboard({
         Games, Inc.
       </footer>
     </div>
+  )
+}
+
+function HeroReplay({ latest, onWatch }: { latest: MatchReport; onWatch: () => void }) {
+  return (
+    <button className="hero-replay" onClick={onWatch}>
+      <ChampIcon name={latest.championName} size={46} />
+      <span className="hero-text">
+        <span className="hero-kicker">Latest game</span>
+        <span className="hero-title">
+          {latest.championName} <span className="vs">vs {latest.opponentChampion ?? '?'}</span>{' '}
+          <span className={`result-badge ${latest.win ? 'win' : 'loss'}`}>{latest.win ? 'WIN' : 'LOSS'}</span>{' '}
+          <span className="hero-meta">
+            {latest.kills}/{latest.deaths}/{latest.assists} · {Math.round(latest.durationMin)} min
+          </span>
+        </span>
+        {latest.flags[0] && <span className="hero-flag">{latest.flags[0].title}</span>}
+      </span>
+      <span className="play-btn hero-play">
+        <svg viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3.5 2.2 L9.8 6 L3.5 9.8 Z" fill="currentColor" />
+        </svg>
+        Watch replay
+      </span>
+    </button>
   )
 }
 

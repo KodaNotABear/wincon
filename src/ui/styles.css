@@ -26,6 +26,9 @@
   --brand-ink: #062012;
   --card-shadow: 5px 5px 0 #e9e8e0;
   --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --map-bg: #eef0e9;
+  --map-river: #d9e4ea;
+  --map-lane: #dddcd0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -46,6 +49,9 @@
     --brand: #2bd88f;
     --brand-ink: #062012;
     --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 5px 5px 0 rgba(0, 0, 0, 0.4);
+    --map-bg: #131711;
+    --map-river: #17222b;
+    --map-lane: #24271f;
   }
 }
 
@@ -544,6 +550,139 @@ footer {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.6;
+}
+
+/* Champ icons (Data Dragon) */
+.champ-icon {
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  flex: none;
+  background: var(--grid);
+}
+.champ-icon-fallback {
+  display: inline-block;
+}
+.matchup-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Player lookup */
+.lookup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -6px 0 14px;
+}
+.lookup-input {
+  font: inherit;
+  font-size: 13.5px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink);
+  padding: 5px 14px;
+  min-width: 200px;
+}
+.lookup-input:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+.lookup-error {
+  font-size: 12.5px;
+  color: var(--status-critical);
+}
+
+/* Hero replay card */
+.hero-replay {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  cursor: pointer;
+  box-shadow: var(--card-shadow);
+}
+.hero-replay .champ-icon {
+  border-radius: 10px;
+}
+.hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.hero-kicker {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hero-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+.hero-title .vs,
+.hero-meta {
+  color: var(--muted);
+  font-weight: 500;
+}
+.hero-meta {
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+}
+.hero-flag {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.hero-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+.hero-play svg {
+  width: 11px;
+  height: 11px;
+}
+.hero-replay:hover .hero-play {
+  filter: brightness(1.06);
+}
+
+.section-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: -8px 0 10px;
+}
+
+.match-row {
+  cursor: pointer;
+}
+.match-row:hover td {
+  background: color-mix(in srgb, var(--brand) 5%, transparent);
+}
+
+.moment-count {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: system-ui, sans-serif;
+  font-weight: 500;
+  margin-left: auto;
 }
 
 /* Replay */

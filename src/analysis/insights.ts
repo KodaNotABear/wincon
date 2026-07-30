@@ -92,14 +92,14 @@ function championGuidance(agg: Aggregate, matches: MatchReport[]): Insight | nul
         id: 'emerging-main',
         severity: 'good',
         title: `${emerging.name} is becoming your main, and it's working`,
-        detail: `${emerging.recentTen} of your last 10 games on ${emerging.name} at ${pct(wr)} overall (${emerging.wins}W ${emerging.games - emerging.wins}L). Commitment is how climbs happen; keep queueing them.`,
+        detail: `${emerging.recentTen} of your last 10 games on ${emerging.name} at ${pct(wr)} overall (${emerging.wins}W ${emerging.games - emerging.wins}L). Keep queueing them.`,
       }
     }
     return {
       id: 'emerging-main-struggling',
       severity: 'info',
       title: `You're committing to ${emerging.name}; the results aren't there yet`,
-      detail: `${emerging.recentTen} of your last 10 games on ${emerging.name}, but ${pct(wr)} winrate over ${emerging.games} games. Champion mastery usually takes 20+ games to pay off; give it that long before judging, and review the losses on them specifically.`,
+      detail: `${emerging.recentTen} of your last 10 games on ${emerging.name}, but ${pct(wr)} winrate over ${emerging.games} games. Give it 20 games before judging; review the losses on them specifically.`,
     }
   }
 
@@ -119,7 +119,7 @@ function championGuidance(agg: Aggregate, matches: MatchReport[]): Insight | nul
       id: 'wide-champ-pool',
       severity: 'warn',
       title: 'Your champion pool is too wide to climb with',
-      detail: `${poolSize} different champions in ${agg.games} games and no champion in more than a few of your recent picks. Mastery beats variety; based on recent results your best bets are ${naming}. Pick one, or pick someone new, but commit.`,
+      detail: `${poolSize} different champions in ${agg.games} games and no champion in more than a few of your recent picks. Based on recent results your best bets are ${naming}.`,
     }
   }
   return null
@@ -147,7 +147,7 @@ function momentum(matches: MatchReport[]): Insight | null {
       id: 'momentum',
       severity: up ? 'good' : 'warn',
       title: up ? 'Your recent games are trending up' : 'Your recent games are trending down',
-      detail: `Last ${half} games: ${pct(winrate(recent))} winrate vs ${pct(winrate(older))} in the ${matches.length - half} before them. ${up ? 'Whatever changed, protect it.' : 'Worth asking what changed: champions, role, schedule, or tilt-queueing.'}`,
+      detail: `Last ${half} games: ${pct(winrate(recent))} winrate vs ${pct(winrate(older))} in the ${matches.length - half} before them. ${up ? 'Keep whatever changed.' : 'Worth asking what changed: champion, role, or queueing tired.'}`,
     }
   }
 
@@ -186,7 +186,7 @@ export function buildInsights(agg: Aggregate, matches: MatchReport[]): Insight[]
         id: 'losing-lane-cs',
         severity: 'bad',
         title: 'You lose the farm battle in lane',
-        detail: `Average CS diff at 10:00 is ${fmt(agg.avgCsDiff10)} vs your lane opponent. That compounds into an item deficit by the first fight. Prioritize catching every wave under tower before looking for trades.`,
+        detail: `Average CS diff at 10:00 is ${fmt(agg.avgCsDiff10)} vs your lane opponent. That's an item component behind by the first fight. Catch waves under tower before looking for trades.`,
       })
     } else if (agg.avgCsDiff10 >= 8) {
       out.push({
@@ -203,7 +203,7 @@ export function buildInsights(agg: Aggregate, matches: MatchReport[]): Insight[]
       id: 'low-cs10',
       severity: 'warn',
       title: `CS at 10:00 is below target for ${agg.primaryRole.toLowerCase()}`,
-      detail: `You average ${agg.avgCs10.toFixed(0)} CS at 10:00; ${bench.cs10.solid} keeps you even and ${bench.cs10.strong} puts you ahead. Farming is the most controllable stat in the game.`,
+      detail: `You average ${agg.avgCs10.toFixed(0)} CS at 10:00; ${bench.cs10.solid} keeps you even and ${bench.cs10.strong} puts you ahead.`,
     })
   }
 
@@ -218,7 +218,7 @@ export function buildInsights(agg: Aggregate, matches: MatchReport[]): Insight[]
         `You average ${agg.deathsByPhasePerGame.early.toFixed(1)} deaths in the laning phase` +
         (overextending
           ? `, and ${Math.round(share! * 100)}% of them happen on the enemy's side of the map. That pattern is overextension without vision: you are pushing past the river before you know where their jungler is.`
-          : `. Early deaths hand over lane priority and plates; play the first 14 minutes to not lose rather than to win.`),
+          : `. Each one hands over lane priority and plates.`),
     })
   }
 
@@ -257,7 +257,7 @@ export function buildInsights(agg: Aggregate, matches: MatchReport[]): Insight[]
       id: 'win-loss-gap',
       severity: 'info',
       title: 'What your wins have in common',
-      detail: `The metric that separates your wins from your losses most is ${biggest.metric}: ${fmt(biggest.winsAvg)} in wins vs ${fmt(biggest.lossesAvg)} in losses. That is the habit to protect when a game starts going sideways.`,
+      detail: `The metric that separates your wins from your losses most is ${biggest.metric}: ${fmt(biggest.winsAvg)} in wins vs ${fmt(biggest.lossesAvg)} in losses.`,
     })
   }
 
