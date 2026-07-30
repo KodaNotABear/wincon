@@ -5,6 +5,9 @@ import { MatchTable } from './MatchTable'
 import { TrendChart } from './TrendChart'
 import { SEVERITY, SeverityChip, fmtSigned } from './shared'
 
+const INSIGHTS_SHOWN = 4
+const GAMES_SHOWN = 10
+
 type LoadState =
   | { status: 'loading' }
   | { status: 'missing' }
@@ -25,15 +28,21 @@ export function App() {
   return <Dashboard report={state.report} />
 }
 
+function Brand() {
+  return (
+    <h1 className="wordmark">
+      <span className="accent">Win</span>con
+    </h1>
+  )
+}
+
 function Onboarding() {
   return (
     <div className="shell">
       <div className="onboard">
-        <h2>
-          Emerald <span style={{ color: 'var(--success-text)' }}>Exit</span>
-        </h2>
+        <Brand />
         <p>
-          A personal ranked review tool. It pulls your recent ranked games from the Riot API and
+          Find your win condition. Wincon pulls your recent ranked games from the Riot API and
           tells you why you lost, not just that you did. No report found yet; two ways to get one:
         </p>
         <ol>
@@ -53,22 +62,39 @@ function Onboarding() {
 
 function Dashboard({ report }: { report: ClimbReport }) {
   const { aggregate: agg, player } = report
+  const [allInsights, setAllInsights] = useState(false)
+  const [allGames, setAllGames] = useState(false)
+
+  const insights = allInsights ? report.insights : report.insights.slice(0, INSIGHTS_SHOWN)
+  const games = allGames ? report.matches : report.matches.slice(0, GAMES_SHOWN)
+
   return (
     <div className="shell">
       <header className="masthead">
-        <h1 className="wordmark">
-          Emerald <span className="accent">Exit</span>
-        </h1>
+        <div className="brand">
+          <Brand />
+          <span className="tagline">find your win condition</span>
+        </div>
         <span className="player-line">
           <strong>
             {player.gameName}#{player.tagLine}
           </strong>{' '}
-          · {agg.games} ranked games · {(agg.winrate * 100).toFixed(0)}% winrate
+          · {agg.primaryRole ? agg.primaryRole.toLowerCase() : '?'} · {agg.games} ranked games ·{' '}
+          {(agg.winrate * 100).toFixed(0)}% winrate
         </span>
       </header>
-      <div className="sub-line">
-        Primary role {agg.primaryRole ? agg.primaryRole.toLowerCase() : 'unknown'} · report generated{' '}
-        {new Date(report.generatedAt).toLocaleString()}
+
+      <div className="stat-strip">
+        <Stat
+          value={agg.avgCsDiff10 !== null ? fmtSigned(agg.avgCsDiff10) : '·'}
+          label="CS diff at 10:00"
+        />
+        <Stat value={agg.deathsByPhasePerGame.early.toFixed(1)} label="deaths before 14:00" />
+        <Stat
+          value={agg.objectiveParticipation !== null ? `${Math.round(agg.objectiveParticipation * 100)}%` : '·'}
+          label="objective participation"
+        />
+        <Stat value={agg.avgVisionPerMin.toFixed(2)} label="vision per minute" />
       </div>
 
       {report.isDemo && (
@@ -87,7 +113,7 @@ function Dashboard({ report }: { report: ClimbReport }) {
             </p>
           </div>
         )}
-        {report.insights.map(insight => (
+        {insights.map(insight => (
           <div
             className="insight"
             key={insight.id}
@@ -101,30 +127,11 @@ function Dashboard({ report }: { report: ClimbReport }) {
           </div>
         ))}
       </div>
-
-      <h2 className="section-title">The numbers</h2>
-      <div className="tiles">
-        <Tile
-          value={agg.avgCsDiff10 !== null ? fmtSigned(agg.avgCsDiff10) : '·'}
-          label="CS diff at 10:00"
-          sub="average vs lane opponent"
-        />
-        <Tile
-          value={agg.deathsByPhasePerGame.early.toFixed(1)}
-          label="Deaths before 14:00"
-          sub={`per game · ${agg.deathsByPhasePerGame.mid.toFixed(1)} mid, ${agg.deathsByPhasePerGame.late.toFixed(1)} late`}
-        />
-        <Tile
-          value={agg.objectiveParticipation !== null ? `${Math.round(agg.objectiveParticipation * 100)}%` : '·'}
-          label="Objective participation"
-          sub="credited on team epic monsters"
-        />
-        <Tile
-          value={agg.avgVisionPerMin.toFixed(2)}
-          label="Vision score per minute"
-          sub={`across ${agg.games} games`}
-        />
-      </div>
+      {report.insights.length > INSIGHTS_SHOWN && (
+        <button className="ghost-btn" onClick={() => setAllInsights(v => !v)}>
+          {allInsights ? 'Show fewer notes' : `Show ${report.insights.length - INSIGHTS_SHOWN} more notes`}
+        </button>
+      )}
 
       <h2 className="section-title">Patterns</h2>
       <div className="chart-row">
@@ -133,24 +140,28 @@ function Dashboard({ report }: { report: ClimbReport }) {
       </div>
 
       <h2 className="section-title">Game by game</h2>
-      <MatchTable matches={report.matches} />
+      <MatchTable matches={games} />
+      {report.matches.length > GAMES_SHOWN && (
+        <button className="ghost-btn" onClick={() => setAllGames(v => !v)}>
+          {allGames ? 'Show recent 10 only' : `Show all ${report.matches.length} games`}
+        </button>
+      )}
 
       <footer>
-        Emerald Exit is a personal project. It isn't endorsed by Riot Games and doesn't reflect the
-        views or opinions of Riot Games or anyone officially involved in producing or managing
-        League of Legends. League of Legends and Riot Games are trademarks or registered trademarks
-        of Riot Games, Inc.
+        Report generated {new Date(report.generatedAt).toLocaleString()}. Wincon is a personal
+        project. It isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot
+        Games or anyone officially involved in producing or managing League of Legends. League of
+        Legends and Riot Games are trademarks or registered trademarks of Riot Games, Inc.
       </footer>
     </div>
   )
 }
 
-function Tile({ value, label, sub }: { value: string; label: string; sub: string }) {
+function Stat({ value, label }: { value: string; label: string }) {
   return (
-    <div className="tile">
-      <div className="tile-value">{value}</div>
-      <div className="tile-label">{label}</div>
-      <div className="tile-sub">{sub}</div>
+    <div className="stat">
+      <span className="stat-value">{value}</span>
+      <span className="stat-label">{label}</span>
     </div>
   )
 }

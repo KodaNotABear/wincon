@@ -1,9 +1,9 @@
 {
-  "name": "emerald-exit",
+  "name": "wincon",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A personal ranked review tool for League of Legends. Pulls your recent ranked games from the Riot API and tells you why you lost, not just that you did.",
+  "description": "Find your win condition. A personal ranked review tool for League of Legends that pulls your recent games from the Riot API and tells you why you lost, not just that you did.",
   "scripts": {
     "sync": "tsx src/cli/sync.ts",
     "analyze": "tsx src/cli/analyze.ts",

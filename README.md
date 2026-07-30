@@ -1,13 +1,14 @@
-# Emerald Exit
+# Wincon
 
-A personal ranked review tool for League of Legends. It pulls your recent ranked
-games from the Riot API and tells you **why** you lost, not just that you did.
+**Find your win condition.** A personal ranked review tool for League of
+Legends: it pulls your recent ranked games from the Riot API and tells you
+**why** you lost, not just that you did.
 
-Most stat sites answer "what happened" with a wall of numbers. Emerald Exit is
-built around the question a coach would ask: *what pattern in these twenty
-games is keeping you in Emerald?* It reads the Match-V5 timeline (per-minute
-frames and events, not just end-of-game totals) and turns it into a small set
-of pointed, opinionated coaching notes:
+Most stat sites answer "what happened" with a wall of numbers. Wincon is built
+around the question a coach would ask: *what pattern in these twenty games is
+keeping you stuck?* It reads the Match-V5 timeline (per-minute frames and
+events, not just end-of-game totals) and turns it into a small set of pointed,
+opinionated coaching notes:
 
 - **Laning**: CS / gold / XP differences vs your actual lane opponent at 10:00
   and 14:00, not raw totals.
@@ -81,7 +82,7 @@ npm run dev
 
 ## Legal
 
-Emerald Exit is a personal project. It isn't endorsed by Riot Games and doesn't
+Wincon is a personal project. It isn't endorsed by Riot Games and doesn't
 reflect the views or opinions of Riot Games or anyone officially involved in
 producing or managing League of Legends. League of Legends and Riot Games are
 trademarks or registered trademarks of Riot Games, Inc.
