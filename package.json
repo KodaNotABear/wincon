@@ -14,7 +14,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "serve": "tsx src/server/serve.ts",
-    "start": "node --import tsx src/server/serve.ts"
+    "start": "node server.js",
+    "build:server": "esbuild src/server/serve.ts --bundle --platform=node --format=esm --target=node20 --outfile=server.js",
+    "build:all": "npm run build && npm run build:server"
   },
   "dependencies": {
     "@fontsource/space-grotesk": "^5.3.0",

@@ -119,6 +119,22 @@ npm run serve     # serve dist/ + data/ + POST /api/sync on :8080
 
 ### Deploying
 
+`dist/` and `server.js` are committed on purpose. The host container is small,
+and running `tsc` plus `vite build` inside it risks an out-of-memory kill on
+every restart, so the build happens on your machine and the container only runs
+a single self-contained file. Deploying is therefore:
+
+```bash
+npm run build:all      # client into dist/, server bundled into server.js
+git commit -am "..."   # ship the artifacts with the source
+git push
+```
+
+Then pull and restart on the host. `server.js` needs no dependencies at all,
+not even tsx, so the container can run `node server.js` with an empty
+node_modules.
+
+
 The one hard requirement is a **persistent disk**. The sync writes match and
 timeline JSON to disk, and those responses are immutable, so a platform with an
 ephemeral filesystem re-fetches everything on every cold start and burns the
