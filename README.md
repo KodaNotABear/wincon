@@ -105,3 +105,48 @@ Wincon is a personal project. It isn't endorsed by Riot Games and doesn't
 reflect the views or opinions of Riot Games or anyone officially involved in
 producing or managing League of Legends. League of Legends and Riot Games are
 trademarks or registered trademarks of Riot Games, Inc.
+
+## Hosting
+
+In development, `/api/sync` and the data routes are Vite plugins in
+`vite.config.ts`, so **a built site has neither**. `src/server/serve.ts` is the
+same behaviour as a standalone Node process:
+
+```bash
+npm run build     # build the client into dist/
+npm run serve     # serve dist/ + data/ + POST /api/sync on :8080
+```
+
+### Deploying
+
+The one hard requirement is a **persistent disk**. The sync writes match and
+timeline JSON to disk, and those responses are immutable, so a platform with an
+ephemeral filesystem re-fetches everything on every cold start and burns the
+Riot rate limit for nothing. That rules out Vercel and Netlify functions. Fly.io,
+Railway and Render all work.
+
+1. Create the app on your host and attach a volume mounted at `/data`.
+2. Set `RIOT_API_KEY` as a platform **secret**. It is never baked into the image.
+3. Deploy. The Dockerfile is host-agnostic.
+
+Order matters: Riot's product registration needs a publicly reachable URL, so
+the app has to be hosted **before** you can apply for a personal key. Until the
+key is approved the site still serves whatever is already cached, which is the
+state it ships in.
+
+### Environment
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RIOT_API_KEY` | none | Riot key. Without it, lookups fail and cached data still serves. |
+| `PORT` | `8080` | Listen port. |
+| `WINCON_DATA_DIR` | `./data` | Cache location. Point at the mounted volume. |
+| `WINCON_DIST` | `./dist` | Built client. |
+| `WINCON_MAX_PLAYERS` | `12` | Cached players kept on disk. Oldest are evicted beyond this. |
+| `WINCON_KEEP_SLUGS` | `koda-10101` | Never evicted, so the showcase player always resolves. |
+| `WINCON_SYNCS_PER_HOUR` | `4` | Per-IP limit. Only real lookups count; a malformed Riot ID is free. |
+
+The endpoint is public, so it is rate limited per IP, runs one sync at a time,
+and caps how many players are kept on disk. Cached matches are immutable, so
+eviction only ever costs a re-sync.
+

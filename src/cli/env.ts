@@ -7,7 +7,10 @@ import path from 'node:path'
 //   data/players/<slug>/report.json
 //   data/players.json                            (index the UI reads)
 
-export const DATA_DIR = path.resolve('data')
+// Overridable so a container can point at a mounted volume instead of CWD.
+export const DATA_DIR = process.env.WINCON_DATA_DIR
+  ? path.resolve(process.env.WINCON_DATA_DIR)
+  : path.resolve('data')
 export const PLAYERS_DIR = path.join(DATA_DIR, 'players')
 
 export function slugify(gameName: string, tagLine: string): string {
