@@ -8,6 +8,32 @@ import path from 'node:path'
 //   data/players.json                            (index the UI reads)
 
 // Overridable so a container can point at a mounted volume instead of CWD.
+// Applied at MODULE LOAD, before any constant below reads process.env.
+//
+// This ordering is load-bearing on hosts where the panel exposes no way to set
+// arbitrary environment variables and a .env file is the only option: reading
+// it later would leave DATA_DIR and the server's limits silently on their
+// defaults while RIOT_API_KEY appeared to work.
+//
+// Real environment variables always win, so a platform that does inject them
+// overrides the file.
+function applyDotEnv(): void {
+
+  const file = path.resolve('.env')
+  if (!fs.existsSync(file)) return
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq === -1) continue
+    const key = trimmed.slice(0, eq).trim()
+    const value = trimmed.slice(eq + 1).trim()
+    if (!(key in process.env)) process.env[key] = value
+  }
+}
+
+applyDotEnv()
+
 export const DATA_DIR = process.env.WINCON_DATA_DIR
   ? path.resolve(process.env.WINCON_DATA_DIR)
   : path.resolve('data')
@@ -93,19 +119,14 @@ export function defaultSlug(): string | null {
 }
 
 /** Tiny .env loader (KEY=VALUE lines) so the CLI has zero runtime deps. */
+/**
+ * Kept for existing callers. The work already happened at module load; see
+ * applyDotEnv below.
+ */
 export function loadEnv(): void {
-  const file = path.resolve('.env')
-  if (!fs.existsSync(file)) return
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq === -1) continue
-    const key = trimmed.slice(0, eq).trim()
-    const value = trimmed.slice(eq + 1).trim()
-    if (!(key in process.env)) process.env[key] = value
-  }
+  applyDotEnv()
 }
+
 
 export function requireEnv(key: string, hint: string): string {
   const value = process.env[key]

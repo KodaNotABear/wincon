@@ -523,6 +523,20 @@ function buildClimbReport(entries, player, opts) {
 // src/cli/env.ts
 import fs from "node:fs";
 import path from "node:path";
+function applyDotEnv() {
+  const file = path.resolve(".env");
+  if (!fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1).trim();
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
+applyDotEnv();
 var DATA_DIR = process.env.WINCON_DATA_DIR ? path.resolve(process.env.WINCON_DATA_DIR) : path.resolve("data");
 var PLAYERS_DIR = path.join(DATA_DIR, "players");
 function slugify(gameName, tagLine) {
@@ -580,17 +594,7 @@ function migrateLegacyLayout() {
   console.log(`Migrated existing data to data/players/${slug}/`);
 }
 function loadEnv() {
-  const file = path.resolve(".env");
-  if (!fs.existsSync(file)) return;
-  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim();
-    if (!(key in process.env)) process.env[key] = value;
-  }
+  applyDotEnv();
 }
 
 // src/server/syncPlayer.ts
