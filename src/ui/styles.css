@@ -704,6 +704,40 @@ td.num {
   margin: 48px auto;
   box-shadow: var(--card-shadow);
 }
+.onboard .lookup-row {
+  margin-top: 20px;
+}
+
+/* the landing form is the front door, so give it more presence than the
+   compact one tucked into the dashboard masthead */
+.onboard .lookup-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  padding: 10px 12px;
+}
+
+.sample-line {
+  margin-top: 18px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-btn:hover {
+  opacity: 0.82;
+}
+
 .onboard ol {
   padding-left: 20px;
   color: var(--ink-2);

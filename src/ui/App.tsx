@@ -32,18 +32,12 @@ export function App() {
   const [players, setPlayers] = useState<PlayerEntry[] | null>(null)
   const [slug, setSlug] = useState<string | null>(null)
   const [report, setReport] = useState<ClimbReport | null>(null)
-  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     fetch(`${BASE_URL}players.json`)
       .then(res => (res.ok ? res.json() : []))
-      .then((list: PlayerEntry[]) => {
-        const withReports = list.filter(p => p.games > 0)
-        setPlayers(withReports)
-        if (withReports.length) setSlug(withReports[0]!.slug)
-        else setFailed(true)
-      })
-      .catch(() => setFailed(true))
+      .then((list: PlayerEntry[]) => setPlayers(list.filter(p => p.games > 0)))
+      .catch(() => setPlayers([]))
   }, [])
 
   useEffect(() => {
@@ -52,7 +46,7 @@ export function App() {
     fetch(`${BASE_URL}report/${slug}.json`)
       .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
       .then(setReport)
-      .catch(() => setFailed(true))
+      .catch(() => setSlug(null))
   }, [slug])
 
   const [syncBusy, setSyncBusy] = useState(false)
@@ -81,8 +75,21 @@ export function App() {
     }
   }
 
-  if (failed) return <Onboarding />
-  if (!players || !slug || !report) return null
+  if (!players) return null
+  // Search is the front door. Opening straight into whichever player happened to
+  // be cached first would show a visitor someone else's account.
+  if (!slug || !report) {
+    return (
+      <Landing
+        players={players}
+        onLookup={addPlayer}
+        onSelect={setSlug}
+        busy={syncBusy}
+        error={syncError}
+        loadingReport={Boolean(slug) && !report}
+      />
+    )
+  }
   return (
     <Dashboard
       report={report}
@@ -90,6 +97,7 @@ export function App() {
       players={players}
       onSelectPlayer={setSlug}
       onAddPlayer={addPlayer}
+      onHome={() => setSlug(null)}
       syncBusy={syncBusy}
       syncError={syncError}
     />
@@ -115,25 +123,70 @@ function Brand() {
   )
 }
 
-function Onboarding() {
+function Landing({
+  players,
+  onLookup,
+  onSelect,
+  busy,
+  error,
+  loadingReport,
+}: {
+  players: PlayerEntry[]
+  onLookup: (riotId: string) => Promise<boolean>
+  onSelect: (slug: string) => void
+  busy: boolean
+  error: string | null
+  loadingReport: boolean
+}) {
+  const [value, setValue] = useState('')
+
   return (
     <div className="shell">
       <div className="onboard">
         <Brand />
         <p>
-          Find your win condition. Wincon pulls recent ranked games from the Riot API, replays them,
-          and tells you why you lost, not just that you did. No players synced yet; two ways in:
+          Find your win condition. Wincon reads your recent ranked games, replays the
+          moments that decided them, and tells you why you lost rather than just that
+          you did.
         </p>
-        <ol>
-          <li>
-            <strong>Sample data, no setup:</strong> <code>npm run demo</code>, then refresh this page.
-          </li>
-          <li>
-            <strong>Any real player:</strong> copy <code>.env.example</code> to <code>.env</code>, add a key
-            from <code>developer.riotgames.com</code>, then run{' '}
-            <code>npm run sync -- "Name#TAG"</code> followed by <code>npm run analyze</code>.
-          </li>
-        </ol>
+
+        <form
+          className="lookup-row"
+          onSubmit={async e => {
+            e.preventDefault()
+            const riotId = value.trim()
+            if (!riotId || busy) return
+            await onLookup(riotId)
+          }}
+        >
+          <input
+            className="lookup-input"
+            placeholder="GameName#TAG"
+            value={value}
+            autoFocus
+            onChange={e => setValue(e.target.value)}
+          />
+          <button className="play-btn" type="submit" disabled={busy || loadingReport}>
+            {busy ? 'Reading your games, this takes a moment…' : 'Look up'}
+          </button>
+        </form>
+        {error && <p className="lookup-error">{error}</p>}
+
+        {players.length > 0 && (
+          <p className="sample-line">
+            {/* Most people looking at this do not play League and have no Riot ID
+                to type, so there has to be a way in without one. */}
+            No Riot ID handy? Open a finished analysis:{' '}
+            {players.map((p, i) => (
+              <span key={p.slug}>
+                {i > 0 && ', '}
+                <button type="button" className="link-btn" onClick={() => onSelect(p.slug)}>
+                  {p.gameName}#{p.tagLine}
+                </button>
+              </span>
+            ))}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -153,6 +206,7 @@ function Dashboard({
   players,
   onSelectPlayer,
   onAddPlayer,
+  onHome,
   syncBusy,
   syncError,
 }: {
@@ -161,6 +215,7 @@ function Dashboard({
   players: PlayerEntry[]
   onSelectPlayer: (slug: string) => void
   onAddPlayer: (riotId: string) => Promise<boolean>
+  onHome: () => void
   syncBusy: boolean
   syncError: string | null
 }) {
@@ -284,7 +339,9 @@ function Dashboard({
     <div className="shell">
       <header className="masthead">
         <div className="brand">
-          <Brand />
+          <button type="button" className="link-btn" onClick={onHome} aria-label="New lookup">
+            <Brand />
+          </button>
           <span className="tagline">find your win condition</span>
         </div>
         <span className="player-line">
