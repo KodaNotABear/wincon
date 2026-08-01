@@ -21,7 +21,9 @@ import { DATA_DIR, PLAYERS_DIR, loadEnv } from '../cli/env'
 const SLUG_RE = /^[a-z0-9-]+$/
 const MATCH_ID_RE = /^[A-Za-z0-9_-]+$/
 
-const PORT = Number(process.env.PORT ?? 8080)
+// Pterodactyl-style game panels (bloom.host) inject SERVER_PORT, not PORT, and
+// assign the port for you. Bind whichever is present.
+const PORT = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 8080)
 const DIST = process.env.WINCON_DIST ?? path.resolve('dist')
 const MAX_PLAYERS = Number(process.env.WINCON_MAX_PLAYERS ?? 12)
 const SYNCS_PER_HOUR = Number(process.env.WINCON_SYNCS_PER_HOUR ?? 4)
