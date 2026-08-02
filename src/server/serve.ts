@@ -70,10 +70,59 @@ function allow(ip: string): boolean {
   return true
 }
 
+// Cloudflare's published IPv4 ranges (https://www.cloudflare.com/ips-v4). They
+// change rarely, and WINCON_TRUSTED_PROXIES overrides the list without a
+// rebuild. If they do change and this goes stale, a real edge request stops
+// being trusted and its visitors share one bucket: too strict, never too loose.
+const DEFAULT_TRUSTED_PROXIES = [
+  '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
+  '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
+  '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
+  '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+].join(',')
+
+const toV4 = (ip: string): number | null => {
+  const m = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip)
+  if (!m) return null
+  let n = 0
+  for (let i = 1; i <= 4; i++) {
+    const octet = Number(m[i])
+    if (octet > 255) return null
+    n = n * 256 + octet
+  }
+  return n
+}
+
+const TRUSTED_PROXIES = (process.env.WINCON_TRUSTED_PROXIES ?? DEFAULT_TRUSTED_PROXIES)
+  .split(',')
+  .map(entry => entry.trim())
+  .filter(Boolean)
+  .map(entry => {
+    const [addr, bitsRaw] = entry.split('/')
+    const base = toV4(addr ?? '')
+    const bits = bitsRaw === undefined ? 32 : Number(bitsRaw)
+    if (base === null || !Number.isInteger(bits) || bits < 0 || bits > 32) return null
+    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
+    return { base: (base & mask) >>> 0, mask }
+  })
+  .filter((cidr): cidr is { base: number; mask: number } => cidr !== null)
+
+const fromTrustedProxy = (ip: string): boolean => {
+  const n = toV4(ip)
+  return n === null ? false : TRUSTED_PROXIES.some(({ base, mask }) => ((n & mask) >>> 0) === base)
+}
+
+// The origin port stays directly reachable, so any forwarding header on a
+// request is attacker controlled until proven otherwise. Only CF-Connecting-IP
+// from an actual Cloudflare edge is believed. X-Forwarded-For is ignored
+// entirely: it is trivial to forge a fresh one per request, which turned the
+// per-IP lookup limit into no limit at all.
 const clientIp = (req: http.IncomingMessage): string => {
-  const fwd = req.headers['x-forwarded-for']
-  const first = Array.isArray(fwd) ? fwd[0] : fwd?.split(',')[0]
-  return (first ?? req.socket.remoteAddress ?? 'unknown').trim()
+  const peer = (req.socket.remoteAddress ?? 'unknown').trim()
+  if (!fromTrustedProxy(peer)) return peer
+  const cf = req.headers['cf-connecting-ip']
+  const forwarded = Array.isArray(cf) ? cf[0] : cf
+  return (forwarded ?? peer).trim()
 }
 
 // ── disk cap ──────────────────────────────────────────────
