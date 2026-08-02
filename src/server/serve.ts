@@ -148,8 +148,23 @@ function evictIfNeeded(): void {
 }
 
 // ── data routes ───────────────────────────────────────────
+// The keep-listed player is the only one guaranteed to still be here, and the
+// only one whose games are mine to put on the front page. Everyone else in the
+// cache is a visitor who typed their own Riot ID, so the flag tells the client
+// which entry it may feature rather than letting it pick whoever synced last.
+function playersJson(): unknown[] {
+  const file = path.join(DATA_DIR, 'players.json')
+  if (!fs.existsSync(file)) return []
+  try {
+    const list = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>[]
+    if (!Array.isArray(list)) return []
+    return list.map(p => ({ ...p, showcase: KEEP.includes(String(p.slug)) }))
+  } catch {
+    return []
+  }
+}
+
 function dataFileFor(url: string): string | null {
-  if (url === '/players.json') return path.join(DATA_DIR, 'players.json')
   const report = url.match(/^\/report\/([^/]+)\.json$/)
   if (report && SLUG_RE.test(report[1]!)) {
     return path.join(PLAYERS_DIR, report[1]!, 'report.json')
@@ -228,12 +243,14 @@ const server = http.createServer((req, res) => {
 
   if (url === '/api/sync' && req.method === 'POST') return handleSync(req, res)
   if (url === '/healthz') return json(res, 200, { ok: true })
+  if (url === '/players.json') {
+    res.setHeader('Cache-Control', 'no-cache')
+    return json(res, 200, playersJson())
+  }
 
   const dataFile = dataFileFor(url)
   if (dataFile) {
-    if (!fs.existsSync(dataFile)) {
-      return url === '/players.json' ? json(res, 200, []) : json(res, 404, { error: 'Not found' })
-    }
+    if (!fs.existsSync(dataFile)) return json(res, 404, { error: 'Not found' })
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-cache')
     return void res.end(fs.readFileSync(dataFile))

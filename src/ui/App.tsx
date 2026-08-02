@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { buildAggregate, type ClimbReport, type MatchReport } from '../analysis/report'
 import { buildInsights } from '../analysis/insights'
 import { ChampIcon } from './ddragon'
@@ -26,6 +26,8 @@ interface PlayerEntry {
   region: string
   games: number
   generatedAt: string | null
+  /** Set by the server for the keep-listed account, the only one safe to feature. */
+  showcase?: boolean
 }
 
 export function App() {
@@ -139,6 +141,10 @@ function Landing({
   loadingReport: boolean
 }) {
   const [value, setValue] = useState('')
+  // Prefer the account the server marked safe to feature. A checkout that just
+  // ran `npm run demo` has no keep-list to match, but a cache holding exactly
+  // one player is unambiguous: there is no stranger it could be mistaken for.
+  const showcase = players.find(p => p.showcase) ?? (players.length === 1 ? players[0]! : null)
 
   return (
     <div className="shell">
@@ -188,7 +194,86 @@ function Landing({
           </p>
         )}
       </div>
+
+      {showcase && <LandingPreview player={showcase} onOpen={() => onSelect(showcase.slug)} />}
     </div>
+  )
+}
+
+/**
+ * A real report rendered under the search box. A visitor who does not play
+ * League has nothing to type and no reason to trust a claim about coaching
+ * notes, so the front door shows actual output instead of describing it.
+ * Silent on failure: the search box above is the thing that has to work.
+ */
+function LandingPreview({ player, onOpen }: { player: PlayerEntry; onOpen: () => void }) {
+  const [report, setReport] = useState<ClimbReport | null>(null)
+  const [metric, setMetric] = useState<TrendMetric>('csDiff10')
+
+  useEffect(() => {
+    let cancelled = false
+    setReport(null)
+    fetch(`${BASE_URL}report/${player.slug}.json`)
+      .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((data: ClimbReport) => {
+        if (!cancelled) setReport(data)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [player.slug])
+
+  if (!report) return null
+
+  const agg = report.aggregate
+  const top = report.insights[0]
+
+  return (
+    <section className="preview">
+      <h2 className="section-title">What it gives you</h2>
+      <p className="preview-sub">
+        {agg.games} ranked games from {player.gameName}#{player.tagLine}, read the same way
+        yours would be.
+      </p>
+
+      <div className="stat-strip">
+        <Stat
+          value={agg.deathsByPhasePerGame.early}
+          format={v => v.toFixed(1)}
+          label="deaths before 14:00"
+        />
+        <Stat value={agg.avgCsDiff10} format={v => fmtSigned(v)} label="CS diff at 10:00" />
+        <Stat
+          value={agg.objectiveParticipation === null ? null : agg.objectiveParticipation * 100}
+          format={v => `${Math.round(v)}%`}
+          label="objective participation"
+        />
+        <Stat value={agg.winrate * 100} format={v => `${Math.round(v)}%`} label="win rate" />
+      </div>
+
+      {top && (
+        <div
+          className="insight"
+          style={{ borderLeftColor: SEVERITY[top.severity].color } as CSSProperties}
+        >
+          <div className="insight-head">
+            <SeverityChip severity={top.severity} />
+            <span className="insight-title">{top.title}</span>
+          </div>
+          <p className="insight-detail">{top.detail}</p>
+        </div>
+      )}
+
+      <div className="chart-row">
+        <DeathMap matches={report.matches} />
+        <TrendChart matches={report.matches} metric={metric} onMetricChange={setMetric} />
+      </div>
+
+      <button className="play-btn preview-cta" type="button" onClick={onOpen}>
+        Open the full analysis
+      </button>
+    </section>
   )
 }
 
@@ -572,11 +657,16 @@ function Dashboard({
               </p>
             </div>
           )}
-          {shownInsights.map(insight => (
+          {shownInsights.map((insight, i) => (
             <div
               className="insight"
               key={insight.id}
-              style={{ borderLeftColor: SEVERITY[insight.severity].color }}
+              style={
+                {
+                  borderLeftColor: SEVERITY[insight.severity].color,
+                  '--i': i,
+                } as CSSProperties
+              }
             >
               <div className="insight-head">
                 <SeverityChip severity={insight.severity} />
