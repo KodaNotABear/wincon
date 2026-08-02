@@ -22,7 +22,7 @@ export function SeverityChip({ severity }: { severity: Severity }) {
 
 export const fmtSigned = (x: number, digits = 1) => (x >= 0 ? '+' : '') + x.toFixed(digits)
 
-const REDUCED_MOTION =
+export const REDUCED_MOTION =
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 /** Eases a number from 0 to its target on mount / target change. */

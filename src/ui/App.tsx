@@ -12,7 +12,7 @@ import { LivePanel } from './LivePanel'
 import { MatchTable } from './MatchTable'
 import { Replay } from './Replay'
 import { TrendChart, type TrendMetric } from './TrendChart'
-import { SEVERITY, SeverityChip, fmtSigned, useCountUp } from './shared'
+import { REDUCED_MOTION, SEVERITY, SeverityChip, fmtSigned, useCountUp } from './shared'
 
 const INSIGHTS_SHOWN = 4
 const GAMES_SHOWN = 10
@@ -145,12 +145,29 @@ function Landing({
   // ran `npm run demo` has no keep-list to match, but a cache holding exactly
   // one player is unambiguous: there is no stranger it could be mistaken for.
   const showcase = players.find(p => p.showcase) ?? (players.length === 1 ? players[0]! : null)
+  const champions = useShowcaseChampions(showcase?.slug ?? null)
+  const shot = useSplashRotation(champions.length)
 
   return (
-    <div className="shell">
-      <div className="onboard">
+    <div className="landing">
+      <div className="landing-art" aria-hidden="true">
+        {champions.map((champion, i) => (
+          <img
+            key={champion}
+            className="landing-splash"
+            data-active={i === shot ? 'true' : undefined}
+            src={`https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champion}_0.jpg`}
+            alt=""
+            onError={e => {
+              ;(e.target as HTMLImageElement).style.display = 'none'
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="landing-inner">
         <Brand />
-        <p>
+        <p className="landing-tagline">
           Find your win condition. Wincon reads your recent ranked games, replays the
           moments that decided them, and tells you why you lost rather than just that
           you did.
@@ -178,6 +195,12 @@ function Landing({
         </form>
         {error && <p className="lookup-error">{error}</p>}
 
+        <ul className="landing-points">
+          <li>Timeline frames, not the scoreboard</li>
+          <li>Every death mapped by phase and position</li>
+          <li>All ten champions replayed around the moments that decided it</li>
+        </ul>
+
         {players.length > 0 && (
           <p className="sample-line">
             {/* Most people looking at this do not play League and have no Riot ID
@@ -194,87 +217,56 @@ function Landing({
           </p>
         )}
       </div>
-
-      {showcase && <LandingPreview player={showcase} onOpen={() => onSelect(showcase.slug)} />}
     </div>
   )
 }
 
+const SPLASH_COUNT = 5
+const SPLASH_MS = 7000
+
 /**
- * A real report rendered under the search box. A visitor who does not play
- * League has nothing to type and no reason to trust a claim about coaching
- * notes, so the front door shows actual output instead of describing it.
- * Silent on failure: the search box above is the thing that has to work.
+ * The champions actually played in the featured analysis, most-played first.
+ * Real games rather than a hand-picked roster, so the art on the front page is
+ * the same data the report is built from.
  */
-function LandingPreview({ player, onOpen }: { player: PlayerEntry; onOpen: () => void }) {
-  const [report, setReport] = useState<ClimbReport | null>(null)
-  const [metric, setMetric] = useState<TrendMetric>('csDiff10')
+function useShowcaseChampions(slug: string | null): string[] {
+  const [champions, setChampions] = useState<string[]>([])
 
   useEffect(() => {
+    if (!slug) return
     let cancelled = false
-    setReport(null)
-    fetch(`${BASE_URL}report/${player.slug}.json`)
+    fetch(`${BASE_URL}report/${slug}.json`)
       .then(res => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((data: ClimbReport) => {
-        if (!cancelled) setReport(data)
+      .then((report: ClimbReport) => {
+        if (cancelled) return
+        setChampions(
+          Object.entries(report.aggregate.championCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, SPLASH_COUNT)
+            .map(([name]) => name),
+        )
       })
       .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [player.slug])
+  }, [slug])
 
-  if (!report) return null
+  return champions
+}
 
-  const agg = report.aggregate
-  const top = report.insights[0]
+/** Index of the splash currently on screen. Holds at the first one when the
+    visitor asked for reduced motion, so nothing moves on its own. */
+function useSplashRotation(count: number): number {
+  const [shot, setShot] = useState(0)
 
-  return (
-    <section className="preview">
-      <h2 className="section-title">What it gives you</h2>
-      <p className="preview-sub">
-        {agg.games} ranked games from {player.gameName}#{player.tagLine}, read the same way
-        yours would be.
-      </p>
+  useEffect(() => {
+    if (count < 2 || REDUCED_MOTION) return
+    const id = setInterval(() => setShot(s => (s + 1) % count), SPLASH_MS)
+    return () => clearInterval(id)
+  }, [count])
 
-      <div className="stat-strip">
-        <Stat
-          value={agg.deathsByPhasePerGame.early}
-          format={v => v.toFixed(1)}
-          label="deaths before 14:00"
-        />
-        <Stat value={agg.avgCsDiff10} format={v => fmtSigned(v)} label="CS diff at 10:00" />
-        <Stat
-          value={agg.objectiveParticipation === null ? null : agg.objectiveParticipation * 100}
-          format={v => `${Math.round(v)}%`}
-          label="objective participation"
-        />
-        <Stat value={agg.winrate * 100} format={v => `${Math.round(v)}%`} label="win rate" />
-      </div>
-
-      {top && (
-        <div
-          className="insight"
-          style={{ borderLeftColor: SEVERITY[top.severity].color } as CSSProperties}
-        >
-          <div className="insight-head">
-            <SeverityChip severity={top.severity} />
-            <span className="insight-title">{top.title}</span>
-          </div>
-          <p className="insight-detail">{top.detail}</p>
-        </div>
-      )}
-
-      <div className="chart-row">
-        <DeathMap matches={report.matches} />
-        <TrendChart matches={report.matches} metric={metric} onMetricChange={setMetric} />
-      </div>
-
-      <button className="play-btn preview-cta" type="button" onClick={onOpen}>
-        Open the full analysis
-      </button>
-    </section>
-  )
+  return shot
 }
 
 const ROLE_LABELS: Record<string, string> = {
