@@ -151,20 +151,25 @@ function Landing({
   return (
     <div className="landing">
       <div className="landing-art" aria-hidden="true">
-        {/* One element drifts and the images ride along inside it. Animating
-            each image separately meant five full-viewport layers moving at
-            once, which is more than the compositor will promote, and an
-            un-promoted layer snaps to whole pixels instead of drifting. */}
+        {/* Two slots crossfading, the way every other slideshow does it, rather
+            than one element per champion. Firefox declines to run a transform
+            animation on the compositor once the animated frame gets large, and
+            five stacked full-bleed images inside the drifting wrapper was
+            exactly that. Off the compositor it cannot hold a sub-pixel offset,
+            so it snapped to whole pixels and stepped. */}
         <div className="landing-pan">
-          {champions.map((champion, i) => (
+          {splashSlots(champions, shot).map(({ slot, champion, active }) => (
             <img
-              key={champion}
+              key={slot}
               className="landing-splash"
-              data-active={i === shot ? 'true' : undefined}
-              src={`https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champion}_0.jpg`}
+              data-active={active ? 'true' : undefined}
+              src={splashUrl(champion)}
               alt=""
+              onLoad={e => {
+                ;(e.target as HTMLImageElement).style.visibility = ''
+              }}
               onError={e => {
-                ;(e.target as HTMLImageElement).style.display = 'none'
+                ;(e.target as HTMLImageElement).style.visibility = 'hidden'
               }}
             />
           ))}
@@ -232,6 +237,28 @@ const SPLASH_COUNT = 5
 // At seven the page spent nearly a third of its time mid-dissolve.
 const SPLASH_MS = 9000
 
+const splashUrl = (champion: string) =>
+  `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champion}_0.jpg`
+
+/**
+ * The two images on screen at any moment: the current champion and the one it
+ * replaced, which is still fading out. Slots are stable DOM elements that swap
+ * their source while invisible, so only two full-bleed images ever exist no
+ * matter how many champions are in the rotation.
+ */
+function splashSlots(
+  champions: string[],
+  shot: number,
+): { slot: number; champion: string; active: boolean }[] {
+  const n = champions.length
+  if (n === 0) return []
+  return [0, 1].map(slot => {
+    const active = slot === shot % 2
+    const index = (active ? shot : shot - 1 + n) % n
+    return { slot, champion: champions[index]!, active }
+  })
+}
+
 /**
  * The champions actually played in the featured analysis, most-played first.
  * Real games rather than a hand-picked roster, so the art on the front page is
@@ -260,17 +287,31 @@ function useShowcaseChampions(slug: string | null): string[] {
     }
   }, [slug])
 
+  // A slot swaps its source at the moment it starts fading in, so the file has
+  // to be in cache by then or the first shot of that champion arrives blank.
+  useEffect(() => {
+    for (const champion of champions) {
+      const preload = new Image()
+      preload.src = splashUrl(champion)
+    }
+  }, [champions])
+
   return champions
 }
 
-/** Index of the splash currently on screen. Holds at the first one when the
-    visitor asked for reduced motion, so nothing moves on its own. */
+/**
+ * How many shots have elapsed. Counts up without wrapping, because the slot a
+ * shot lands in is its parity: wrapping the counter at the champion count let
+ * an odd roster put two consecutive shots in the same slot, and that slot then
+ * swapped its own image while visible, cutting instead of dissolving. Callers
+ * take the modulo they need. Holds at zero under reduced motion.
+ */
 function useSplashRotation(count: number): number {
   const [shot, setShot] = useState(0)
 
   useEffect(() => {
     if (count < 2 || REDUCED_MOTION) return
-    const id = setInterval(() => setShot(s => (s + 1) % count), SPLASH_MS)
+    const id = setInterval(() => setShot(s => s + 1), SPLASH_MS)
     return () => clearInterval(id)
   }, [count])
 

@@ -818,7 +818,7 @@ td.num {
      second. This is one wrapper on a visible page, not the fixed background
      layers where the hint caused rasterization trouble before. */
   .landing-pan {
-    animation: splash-drift 40s ease-in-out infinite alternate;
+    animation: splash-drift 26s ease-in-out infinite alternate;
     will-change: transform;
   }
   @media (max-width: 700px) {
@@ -840,18 +840,18 @@ td.num {
    keyframes: 22px of pan inside a 30px margin would have run the edge close. */
 @keyframes splash-drift {
   from {
-    transform: translate3d(-22px, -8px, 0);
+    transform: translate3d(-38px, -14px, 0);
   }
   to {
-    transform: translate3d(22px, 8px, 0);
+    transform: translate3d(38px, 14px, 0);
   }
 }
 @keyframes splash-drift-sm {
   from {
-    transform: translate3d(-9px, -4px, 0);
+    transform: translate3d(-12px, -6px, 0);
   }
   to {
-    transform: translate3d(9px, 4px, 0);
+    transform: translate3d(12px, 6px, 0);
   }
 }
 
