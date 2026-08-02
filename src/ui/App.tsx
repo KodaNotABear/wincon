@@ -222,7 +222,9 @@ function Landing({
 }
 
 const SPLASH_COUNT = 5
-const SPLASH_MS = 7000
+// Long enough that the two-second crossfade stays a small share of each shot.
+// At seven the page spent nearly a third of its time mid-dissolve.
+const SPLASH_MS = 9000
 
 /**
  * The champions actually played in the featured analysis, most-played first.
