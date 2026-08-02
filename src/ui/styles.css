@@ -795,20 +795,24 @@ td.num {
 
 @media (prefers-reduced-motion: no-preference) {
   .landing-splash {
-    transition: opacity 1.6s ease;
-  }
-  /* Slow drift so a still image does not read as a broken background. Restarts
-     on each activation because the rule stops matching when the shot changes. */
-  .landing-splash[data-active='true'] {
-    animation: splash-drift 22s ease-out both;
+    transition: opacity 2s ease;
+    /* Every splash drifts, not just the visible one. Binding this to the active
+       state made the outgoing image snap its scale back to the start while it
+       was still half faded in view, which read as a lurch on every rotation.
+       Running it on all of them in one phase also means both images sit at the
+       same scale mid-crossfade, so the swap is a pure dissolve with nothing
+       sliding underneath it. */
+    animation: splash-drift 54s ease-in-out infinite alternate;
   }
 }
+/* Six percent over most of a minute: enough that the page is not a still, not
+   enough to notice it moving while reading. */
 @keyframes splash-drift {
   from {
     transform: scale(1.06);
   }
   to {
-    transform: scale(1.14);
+    transform: scale(1.12);
   }
 }
 
