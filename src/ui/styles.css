@@ -729,7 +729,9 @@ td.num {
 .landing-pan {
   position: absolute;
   inset: -8%;
-  transform: translate3d(-1.6%, -1%, 0);
+  /* Neutral resting position. The drift keyframes take over when motion is
+     allowed; with reduced motion this centres in the overscan and stays put. */
+  transform: translate3d(0, 0, 0);
 }
 .landing-splash {
   position: absolute;
@@ -808,23 +810,48 @@ td.num {
   /* The wrapper drifts, so the images never move relative to each other and a
      crossfade is a pure dissolve. Nothing here is bound to the active splash:
      binding it meant the rule stopped matching on rotation and the outgoing
-     image snapped back to the start while still visible. */
+     image snapped back to the start while still visible.
+
+     will-change earns its keep on exactly this element. The drift is about
+     0.02px per frame, which only survives as a composited float transform; on
+     the main thread it snaps to whole pixels and steps diagonally once a
+     second. This is one wrapper on a visible page, not the fixed background
+     layers where the hint caused rasterization trouble before. */
   .landing-pan {
     animation: splash-drift 40s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+  @media (max-width: 700px) {
+    .landing-pan {
+      animation-name: splash-drift-sm;
+    }
   }
 }
 /* A pan rather than a zoom. Scaling a raster image makes the browser
-   re-rasterize it as the scale changes, and each re-raster lands as a discrete
-   pop, so a slow zoom steps visibly no matter how gentle the curve. Slowing it
-   down only spaces the steps further apart. Translation leaves the raster
-   untouched and rides the compositor, so it stays smooth, and the 3D form keeps
-   the layer promoted without will-change. */
+   re-rasterize as the scale changes and each re-raster lands as a discrete pop,
+   so a slow zoom steps no matter how gentle the curve. Translation leaves the
+   raster alone.
+
+   Pixels, not percentages. A percentage translate resolves against the
+   element's own box, which makes it layout-dependent, and Gecko will not hand a
+   layout-dependent transform to the compositor. It ran on the main thread
+   instead and snapped to whole pixels. Absolute lengths keep it composited.
+   The travel is fixed rather than proportional, so small screens get their own
+   keyframes: 22px of pan inside a 30px margin would have run the edge close. */
 @keyframes splash-drift {
   from {
-    transform: translate3d(-1.6%, -1%, 0);
+    transform: translate3d(-22px, -8px, 0);
   }
   to {
-    transform: translate3d(1.6%, 1%, 0);
+    transform: translate3d(22px, 8px, 0);
+  }
+}
+@keyframes splash-drift-sm {
+  from {
+    transform: translate3d(-9px, -4px, 0);
+  }
+  to {
+    transform: translate3d(9px, 4px, 0);
   }
 }
 
