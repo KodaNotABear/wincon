@@ -33,11 +33,15 @@
   --map-brush: #c8ddba;
   --map-camp: #b4b8a6;
   --map-wash: 0.62;
+  /* Splash art has to sit further back on a cream page than on a black one, or
+     the art wins and the search box stops being the point. */
+  --splash-opacity: 0.26;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
+    --splash-opacity: 0.5;
     --page: #0d0d0d;
     --surface: #1a1a19;
     --ink: #ffffff;
@@ -694,55 +698,118 @@ td.num {
   padding: 1px 9px 1px 6px;
 }
 
-/* Onboarding */
-.onboard {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px 28px;
-  max-width: 640px;
-  margin: 48px auto;
-  box-shadow: var(--card-shadow);
-}
-.onboard .lookup-row {
-  margin-top: 20px;
-}
-
-/* the landing form is the front door, so give it more presence than the
-   compact one tucked into the dashboard masthead */
-.onboard .lookup-input {
-  flex: 1;
-  min-width: 0;
-  font-size: 15px;
-  padding: 10px 12px;
-}
-
 .sample-line {
   margin-top: 18px;
   color: var(--ink-2);
   font-size: 14px;
 }
 
-/* The proof under the search box. Full shell width rather than the 640px the
-   form sits in, because the charts need room to be legible. */
-.preview {
-  margin-top: 56px;
-  padding-top: 32px;
-  border-top: 1px solid var(--border);
+/* Landing. Splash art carries the page: someone arriving from a portfolio link
+   should recognise what this is about before reading a word. The art is the
+   champions from the featured analysis, so it is the same data as the report
+   rather than decoration picked for looks. */
+.landing {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 56px 24px;
 }
-.preview-sub {
-  margin: 2px 0 16px;
+.landing-art {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.landing-splash {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+  opacity: 0;
+  transform: scale(1.06);
+}
+.landing-splash[data-active='true'] {
+  opacity: var(--splash-opacity);
+}
+/* Scrim sits above the art so type stays legible over any splash, bright or
+   dark, in either colour scheme. */
+.landing-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(125% 85% at 50% 38%, transparent 0%, var(--page) 76%),
+    linear-gradient(to bottom, transparent 45%, var(--page) 100%);
+}
+.landing-inner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 620px;
+  text-align: center;
+}
+.landing-tagline {
+  margin: 10px auto 0;
+  max-width: 30em;
+  color: var(--ink-2);
+}
+.landing .lookup-row {
+  margin-top: 22px;
+}
+.landing .lookup-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  padding: 10px 12px;
+}
+.landing-points {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  font-size: 13px;
   color: var(--muted);
-  font-size: 14px;
 }
-.preview .insight {
-  margin-top: 12px;
+.landing-points li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
-.preview .chart-row {
-  margin-top: 12px;
+.landing-points li::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand);
 }
-.preview-cta {
-  margin-top: 18px;
+.landing .sample-line {
+  margin-top: 26px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .landing-splash {
+    transition: opacity 1.6s ease;
+  }
+  /* Slow drift so a still image does not read as a broken background. Restarts
+     on each activation because the rule stops matching when the shot changes. */
+  .landing-splash[data-active='true'] {
+    animation: splash-drift 22s ease-out both;
+  }
+}
+@keyframes splash-drift {
+  from {
+    transform: scale(1.06);
+  }
+  to {
+    transform: scale(1.14);
+  }
 }
 
 .link-btn {
@@ -760,14 +827,6 @@ td.num {
   opacity: 0.82;
 }
 
-.onboard ol {
-  padding-left: 20px;
-  color: var(--ink-2);
-}
-.onboard li {
-  margin-bottom: 10px;
-}
-.onboard code,
 .demo-banner code {
   background: var(--page);
   border: 1px solid var(--border);
@@ -1677,8 +1736,7 @@ footer {
   .panel,
   .table-wrap,
   .live-panel,
-  .demo-banner,
-  .onboard {
+  .demo-banner {
     animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
   }
   /* The index comes from the render, so the ladder covers any number of notes
