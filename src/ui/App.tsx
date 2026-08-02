@@ -151,18 +151,24 @@ function Landing({
   return (
     <div className="landing">
       <div className="landing-art" aria-hidden="true">
-        {champions.map((champion, i) => (
-          <img
-            key={champion}
-            className="landing-splash"
-            data-active={i === shot ? 'true' : undefined}
-            src={`https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champion}_0.jpg`}
-            alt=""
-            onError={e => {
-              ;(e.target as HTMLImageElement).style.display = 'none'
-            }}
-          />
-        ))}
+        {/* One element drifts and the images ride along inside it. Animating
+            each image separately meant five full-viewport layers moving at
+            once, which is more than the compositor will promote, and an
+            un-promoted layer snaps to whole pixels instead of drifting. */}
+        <div className="landing-pan">
+          {champions.map((champion, i) => (
+            <img
+              key={champion}
+              className="landing-splash"
+              data-active={i === shot ? 'true' : undefined}
+              src={`https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${champion}_0.jpg`}
+              alt=""
+              onError={e => {
+                ;(e.target as HTMLImageElement).style.display = 'none'
+              }}
+            />
+          ))}
+        </div>
       </div>
 
       <div className="landing-inner">

@@ -724,17 +724,21 @@ td.num {
 }
 /* Oversized on purpose. The drift is a pan, not a zoom, and the extra 8% on
    each side is the room it pans into without exposing an edge. .landing clips
-   the overflow. */
+   the overflow. Exactly one element carries the motion, so there is one layer
+   to promote rather than one per splash. */
+.landing-pan {
+  position: absolute;
+  inset: -8%;
+  transform: translate3d(-1.6%, -1%, 0);
+}
 .landing-splash {
   position: absolute;
-  top: -8%;
-  left: -8%;
-  width: 116%;
-  height: 116%;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   object-position: center 22%;
   opacity: 0;
-  transform: translate3d(-1.6%, -1%, 0);
 }
 .landing-splash[data-active='true'] {
   opacity: var(--splash-opacity);
@@ -800,13 +804,13 @@ td.num {
 @media (prefers-reduced-motion: no-preference) {
   .landing-splash {
     transition: opacity 2s ease;
-    /* Every splash drifts, not just the visible one. Binding this to the active
-       state made the outgoing image snap its scale back to the start while it
-       was still half faded in view, which read as a lurch on every rotation.
-       Running it on all of them in one phase also means both images sit at the
-       same scale mid-crossfade, so the swap is a pure dissolve with nothing
-       sliding underneath it. */
-    animation: splash-drift 54s ease-in-out infinite alternate;
+  }
+  /* The wrapper drifts, so the images never move relative to each other and a
+     crossfade is a pure dissolve. Nothing here is bound to the active splash:
+     binding it meant the rule stopped matching on rotation and the outgoing
+     image snapped back to the start while still visible. */
+  .landing-pan {
+    animation: splash-drift 40s ease-in-out infinite alternate;
   }
 }
 /* A pan rather than a zoom. Scaling a raster image makes the browser
