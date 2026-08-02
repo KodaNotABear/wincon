@@ -723,6 +723,28 @@ td.num {
   font-size: 14px;
 }
 
+/* The proof under the search box. Full shell width rather than the 640px the
+   form sits in, because the charts need room to be legible. */
+.preview {
+  margin-top: 56px;
+  padding-top: 32px;
+  border-top: 1px solid var(--border);
+}
+.preview-sub {
+  margin: 2px 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.preview .insight {
+  margin-top: 12px;
+}
+.preview .chart-row {
+  margin-top: 12px;
+}
+.preview-cta {
+  margin-top: 18px;
+}
+
 .link-btn {
   background: none;
   border: none;
@@ -1659,12 +1681,10 @@ footer {
   .onboard {
     animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
   }
-  .insight:nth-child(1) { animation-delay: 0.05s; }
-  .insight:nth-child(2) { animation-delay: 0.1s; }
-  .insight:nth-child(3) { animation-delay: 0.15s; }
-  .insight:nth-child(4) { animation-delay: 0.2s; }
-  .insight:nth-child(5) { animation-delay: 0.25s; }
-  .insight:nth-child(6) { animation-delay: 0.3s; }
+  /* The index comes from the render, so the ladder covers any number of notes
+     rather than the six a hand-written list happened to reach. Capped so a long
+     list does not leave the last card arriving a second after the first. */
+  .insight { animation-delay: calc(min(var(--i, 0), 9) * 0.05s); }
   .chart-row .panel:nth-child(2) { animation-delay: 0.08s; }
   .table-wrap { animation-delay: 0.1s; }
   .insight,

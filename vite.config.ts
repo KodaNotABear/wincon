@@ -21,7 +21,22 @@ const serveData = (): Plugin => ({
       const url = req.url?.split('?')[0] ?? ''
       let file: string | null = null
       if (url === '/players.json') {
-        file = path.resolve('data/players.json')
+        // Mirrors the production server: mark the keep-listed player so the
+        // landing preview features a known account, never a visitor's.
+        const keep = (process.env.WINCON_KEEP_SLUGS ?? 'koda-10101')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+        const players = path.resolve('data/players.json')
+        if (!fs.existsSync(players)) {
+          res.statusCode = 404
+          res.end('[]')
+          return
+        }
+        const list = JSON.parse(fs.readFileSync(players, 'utf8')) as Record<string, unknown>[]
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify(list.map(p => ({ ...p, showcase: keep.includes(String(p.slug)) }))))
+        return
       } else {
         const report = url.match(/^\/report\/([^/]+)\.json$/)
         const match = url.match(/^\/match\/([^/]+)\/([^/]+)\.json$/)
@@ -147,6 +162,9 @@ const portfolioDemo = (): Plugin => ({
           region: DEMO_PLAYER.region,
           games: report.matches.length,
           generatedAt,
+          // The static build ships exactly one anonymized player, so it is the
+          // showcase by definition.
+          showcase: true,
         },
       ]),
     })

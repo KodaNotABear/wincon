@@ -759,8 +759,18 @@ function evictIfNeeded() {
     console.log(`[wincon] evicted cached player ${dirs[i].name}`);
   }
 }
+function playersJson() {
+  const file = path3.join(DATA_DIR, "players.json");
+  if (!fs3.existsSync(file)) return [];
+  try {
+    const list = JSON.parse(fs3.readFileSync(file, "utf8"));
+    if (!Array.isArray(list)) return [];
+    return list.map((p) => ({ ...p, showcase: KEEP.includes(String(p.slug)) }));
+  } catch {
+    return [];
+  }
+}
 function dataFileFor(url) {
-  if (url === "/players.json") return path3.join(DATA_DIR, "players.json");
   const report = url.match(/^\/report\/([^/]+)\.json$/);
   if (report && SLUG_RE.test(report[1])) {
     return path3.join(PLAYERS_DIR, report[1], "report.json");
@@ -822,11 +832,13 @@ var server = http.createServer((req, res) => {
   const url = (req.url ?? "/").split("?")[0];
   if (url === "/api/sync" && req.method === "POST") return handleSync(req, res);
   if (url === "/healthz") return json(res, 200, { ok: true });
+  if (url === "/players.json") {
+    res.setHeader("Cache-Control", "no-cache");
+    return json(res, 200, playersJson());
+  }
   const dataFile = dataFileFor(url);
   if (dataFile) {
-    if (!fs3.existsSync(dataFile)) {
-      return url === "/players.json" ? json(res, 200, []) : json(res, 404, { error: "Not found" });
-    }
+    if (!fs3.existsSync(dataFile)) return json(res, 404, { error: "Not found" });
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
     return void res.end(fs3.readFileSync(dataFile));
