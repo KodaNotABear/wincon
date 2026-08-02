@@ -722,15 +722,19 @@ td.num {
   inset: 0;
   pointer-events: none;
 }
+/* Oversized on purpose. The drift is a pan, not a zoom, and the extra 8% on
+   each side is the room it pans into without exposing an edge. .landing clips
+   the overflow. */
 .landing-splash {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: -8%;
+  left: -8%;
+  width: 116%;
+  height: 116%;
   object-fit: cover;
   object-position: center 22%;
   opacity: 0;
-  transform: scale(1.06);
+  transform: translate3d(-1.6%, -1%, 0);
 }
 .landing-splash[data-active='true'] {
   opacity: var(--splash-opacity);
@@ -805,14 +809,18 @@ td.num {
     animation: splash-drift 54s ease-in-out infinite alternate;
   }
 }
-/* Six percent over most of a minute: enough that the page is not a still, not
-   enough to notice it moving while reading. */
+/* A pan rather than a zoom. Scaling a raster image makes the browser
+   re-rasterize it as the scale changes, and each re-raster lands as a discrete
+   pop, so a slow zoom steps visibly no matter how gentle the curve. Slowing it
+   down only spaces the steps further apart. Translation leaves the raster
+   untouched and rides the compositor, so it stays smooth, and the 3D form keeps
+   the layer promoted without will-change. */
 @keyframes splash-drift {
   from {
-    transform: scale(1.06);
+    transform: translate3d(-1.6%, -1%, 0);
   }
   to {
-    transform: scale(1.12);
+    transform: translate3d(1.6%, 1%, 0);
   }
 }
 
